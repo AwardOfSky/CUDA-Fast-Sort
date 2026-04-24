@@ -1,6 +1,6 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe
-// TODOs refactor unsigned_of?
+
 // Utils header
+// TODOs refactor unsigned_of?
 #pragma once
 
 #include <cuda_runtime.h>
@@ -46,6 +46,7 @@ static inline size_t reserve_aligned(size_t* off, size_t bytes, size_t align) {
 #endif
 
 
+// Linux needs these wrappers for 64-bit counters
 __device__ __forceinline__ uint32_t atomic_add_wrap(uint32_t* ptr, uint32_t val) {
     return atomicAdd(ptr, val);
 }
@@ -125,22 +126,6 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
-// ---- radix helpers ----
-// for 32 bits
-// 18, 38 (8)
-// 12, 21 (16645)
-// 10, 
-// 16, 15
-// 14, 17
-
-// for 64 bits:
-// 7, 12 / 6, 14
-// 9, 10 / 18, 8 (worse)
-
-// for 16 bits:
-// 25, 10
-
-
 struct radix_consts {
     static constexpr uint32_t RADIX_BITS = 8;
     static constexpr uint32_t RADIX_BIN_SIZE = 1u << RADIX_BITS;
@@ -153,10 +138,17 @@ struct radix_tuning : radix_consts {
 
     static constexpr uint32_t RADIX_PASSES = sizeof(T);
 
-    static constexpr uint32_t CTA_MULTIPLIER = (sizeof(T) <= 4) ? 21 : 6;
-    static constexpr uint32_t REORDER_WARPS = (sizeof(T) <= 4) ? 12 : 14;
+    // These CTA_MULTIPLIER and REORDER_WARPS are for sm_86
+    // In the end, these two constants should be a lookup table
+    // according to the sm_xx of the card, but I only have this one
+    static constexpr uint32_t CTA_MULTIPLIER =  (sizeof(T) <= 4) ? 21 : 
+                                                (sizeof(T) <= 8) ? 6  : 
+                                                2;
+    static constexpr uint32_t REORDER_WARPS =   (sizeof(T) <= 4) ? 12 :
+                                                (sizeof(T) <= 8) ? 14 :
+                                                20;
     
-    static constexpr uint32_t REORDER_THREADS = REORDER_WARPS * WARP_SIZE;  // 256
+    static constexpr uint32_t REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
     static constexpr uint32_t SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items per CTA
     static constexpr uint32_t REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
     static constexpr uint32_t REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
@@ -179,28 +171,31 @@ __device__ __forceinline__ uint32_t extract_byte(U x, U bit) {
 template<typename T>
 struct radix_type_traits {
 
-
     // 128 bit support (for integer types in GCC and Clang)
 #if defined(__SIZEOF_INT128__)
     using native_u128 = unsigned __int128;
+    using native_i128 = __int128;
     static constexpr bool has_native_u128 = true;
 #else
     using native_u128 = uint64_t;
+    using native_i128 = int64_t;
     static constexpr bool has_native_u128 = false;
 #endif
+    static constexpr bool type_is_valid_128 = std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
 
 
-    static_assert(std::is_arithmetic_v<T>, "Radix type must be a numeric.");
+    // type compliance asserts 
+    static_assert(std::is_arithmetic_v<T> || type_is_valid_128, "Radix type must be a numeric.");
     static_assert(sizeof(T) <= 16, "Radix type too large.");
     static_assert(
         (sizeof(T) != 16) || has_native_u128,
         "128-bit keys require native same-width unsigned type support."
     );
     static_assert(
-        (sizeof(T) != 16) || std::is_integral_v<T>,
+        (sizeof(T) != 16) || type_is_valid_128,
         "Only 128-bit integer keys are supported!"
     );
-    // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort!
+    // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort
 
 
     using unsigned_of =
@@ -343,11 +338,10 @@ constexpr const char* arr_modes_to_string(Array_Modes mode) {
 }
 
 
-
-#define RNG_FULL_LCG    0
+#define RNG_AVALANCHE_MIX    1
 __host__ __device__ __forceinline__ uint32_t mix32(uint32_t x) {
     
-#if RNG_FULL_LCG
+#if RNG_AVALANCHE_MIX
     x ^= x >> 16;
     x *= 0x7feb352dU;
     x ^= x >> 15;
@@ -364,25 +358,50 @@ __host__ __device__ __forceinline__ uint32_t mix32(uint32_t x) {
 
 template<typename Key_T, typename Len_T>
 __global__ void init_keys(Key_T* a, Len_T n, uint32_t seed, Array_Modes arr_mode) {
-    Len_T i = blockIdx.x * blockDim.x + threadIdx.x;
     using U = get_unsigned_of<Key_T>;
-
+    using RT = radix_type_traits<Key_T>;
+    
+    Len_T i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         U x;
 
+        // random init based on type
         if constexpr (sizeof(U) <= 4) {
-            uint32_t r = mix32(i ^ seed);
-            x = U(r);
+            x = mix32(i ^ seed);
+        } else if constexpr (sizeof(U) <= 8) {
+            x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
+                (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
+        } else if constexpr (RT::has_native_u128) {
+            using U128 = typename RT::native_u128;
+            x = (U128(mix32(i + 0x00000000u) ^ seed) << 96) |
+                (U128(mix32(i + 0x9e3779b9u) ^ seed) << 64) |
+                (U128(mix32(i + 0x3c6ef372u) ^ seed) << 32) |
+                (U128(mix32(i + 0xdaa66d2bu) ^ seed) << 0);
         } else {
-            uint64_t hi = (uint64_t)(mix32(i) ^ seed);
-            uint64_t lo = (uint64_t)(mix32(i + 0x9e3779b9u) ^ seed);
-            x = U((hi << 32) | lo);
+            return;
         }
 
+        // skip every other bytes
         if (arr_mode == Array_Modes::blank_bytes) {
-            x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
+            if constexpr (sizeof(U) <= 8) {
+                x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
+            } else if constexpr (RT::has_native_u128) {
+                using U128 = typename RT::native_u128;
+
+                U128 keep =
+                    (U128(0xFF00FF00FF00FF00ull) << 64) |
+                    U128(0xFF00FF00FF00FF00ull);
+                U128 fill =
+                    (U128(0x0055005500550055ull) << 64) |
+                    U128(0x0055005500550055ull);
+                
+                x = U((U128(x) & keep) | fill);
+            } else {
+                return;
+            }
         }
 
+        // copy bits to dest
         a[i] = radix_type_traits<Key_T>::bits_to_type(x);
     }
 }
@@ -425,7 +444,7 @@ double stdev(const T* arr, double avg, size_t n) {
 }
 
 
-#define MIN_WARMUP_MS 50.0f
+#define MIN_WARMUP_MS 250.0f
 
 void sleep_ms(long milliseconds) {
 #if defined(_WIN32)

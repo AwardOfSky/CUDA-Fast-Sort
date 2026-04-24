@@ -1,5 +1,4 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe
-// Lookback header
+// Ranker header
 #pragma once
 
 #include <cuda_runtime.h>

@@ -1,4 +1,3 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe
 // Lookback header
 #pragma once
 
@@ -100,10 +99,10 @@ template <>
 struct Lookback_Policy<Lookback_Modes::u32_epoch>
     : Lookback_Policy_Base<uint32_t, true, true> {};
 
-// <uint32_t, false, true> for slightly faster(?), more memory expensive
+// <uint32_t, false, false> for slightly faster(?), more memory expensive
 template <>
 struct Lookback_Policy<Lookback_Modes::u32_plain>
-    : Lookback_Policy_Base<uint32_t, false, false> {};
+    : Lookback_Policy_Base<uint32_t, false, true> {};
 
 template <>
 struct Lookback_Policy<Lookback_Modes::u64_epoch>

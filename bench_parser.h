@@ -1,4 +1,4 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
+// Parser header
 #pragma once
 
 #include <cstdint>
@@ -8,7 +8,7 @@
 namespace parse {
 
 struct Global_Config {
-    size_t n = 1 << 27;
+    size_t n = size_t(1) << 27;
     uint32_t iterations = 30;
     uint32_t warmups = 10;
     bool descending = false;

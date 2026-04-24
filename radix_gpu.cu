@@ -1,11 +1,17 @@
 // nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe && cuobjdump --dump-sass radix_gpu.exe > sass1.txt && fc sass.txt sass1.txt
 
+// Compare SASS agaisnt "sass.txt" baseline:
+//
+// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe &&
+// cuobjdump --dump-sass radix_gpu.exe > sass1.txt &&
+// fc sass.txt sass1.txt
 
 /* TODOs:
     - not hardcode masks (like in cub_match_any_8_u32 PTX)
     - change C-style pointers to C++ style
+    - add suport for long doubles
 */
+
 
 #include <cuda_runtime.h>
 #include <cstdint>

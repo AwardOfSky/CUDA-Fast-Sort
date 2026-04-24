@@ -1,4 +1,3 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
 #include "bench_parser.h"
 
 #include <cstdint>

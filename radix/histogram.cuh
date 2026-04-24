@@ -1,4 +1,3 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe
 // Histogram header
 #pragma once
 

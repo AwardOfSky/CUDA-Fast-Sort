@@ -14,7 +14,8 @@
 #include "bench_parser.h"
 
 
-template<bool Descending, typename T, typename Len_T> int benchmark_cub(
+template<bool Descending, typename T, typename Len_T>
+int benchmark_cub(
 Len_T n,
 uint32_t warmups,
 uint32_t iters,
