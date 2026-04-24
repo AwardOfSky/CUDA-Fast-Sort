@@ -1,8 +1,9 @@
+// Compile:
 // nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
 
 // Compare SASS agaisnt "sass.txt" baseline:
 //
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe &&
+// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe &&
 // cuobjdump --dump-sass radix_gpu.exe > sass1.txt &&
 // fc sass.txt sass1.txt
 
