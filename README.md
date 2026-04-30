@@ -21,7 +21,7 @@ The implementation is largely based on CUB's DeviceRadixSort:
 - 8-bit radix
 - A priori global histogram counts
 - Onesweep design (per pass: read once, write once)
-- Coupled lookback chain with early publication
+- Coupled lookback chain with early publication and epoch bits
 - Warp-level design
 
 Therefore, most of the implementation is, effectively, a simplified translation of these techniques/principles.
@@ -53,9 +53,9 @@ From a **proof-of-concept** perspective, some features were intentionally left o
 <sup>2</sup> This was mainly done to test larger arrays. Unlike CUB, which preserves the input and writes to a separate output buffer, this implementation uses a standard two-buffer ping-pong scheme. This simplifies the pipeline and avoids additional buffer management, at the performance cost of potentially overwriting the input (if an odd number of passes is performed, a final extra array copy is required, as far as I understand, CUB performs no copies).
 
 
-### Optimizations:
+## Optimizations:
 
-#### Lookback epoch bits
+### Lookback epoch bits
 
 
 As far as improving performance is concerned, this optimization does a lot of the heavy lifting because it removes a full lookback buffer clear on most passes and for most scenarios.
@@ -67,7 +67,7 @@ In addition to the partial/global publish bits, this implementation stores epoch
 
 The epoch check might be slightly more expensive than a zero check in isolation, but in practice, the chained waiting pattern of the lookback hides most of that cost. In testing, the main downside was that the extra bookkeeping seems to make the ```__nanosleep()```'ing backoff slightly less effective, _i.e._ threads seem to sleep for fewer cycles.
 
-We still need to initialize the lookback buffer before the first use of a given epoch value, but we can fill it with a dedicated epoch-tag pattern with 0 for the publication bits and non-zero for the epoch bits (as that is the number of the pass). That way, a matching epoch with no partial/global bits set is immediately recognized as "not yet published".
+We still need to initialize the lookback buffer before the first use of a given epoch value, but we can fill it with a dedicated epoch-tag pattern with 0 for the publication bits and non-zero for the epoch bits (as that is the number of the pass). That way, a matching epoch with no partial/global bits set is immediately recognized as not yet published.
 The pseudocode (for the lookback) is as follows:
 
 ```python
@@ -94,7 +94,7 @@ Moreover, for key sizes larger than 4 bytes, the buffer is cleared every 4th pas
 
 For larger arrays (more than 2<sup>30</sup> elements), the implementation switches to a 64-bit lookback, with 6 epoch bits and 2 publish bits, leaving 56 bits for the actual counter. Although this doubles the lookback memory usage, sorting at this scale already requires gigabytes of VRAM, even for 8-bit key types, so the additional memory footprint isn't great in comparison. Besides, saving a couple of MBs and switching to a multi-group lookback design with worse performance didn't look like a good trade-off, especially since we are not clearing this buffer every pass anymore.
 
-#### Early-exiting
+### Early-exiting
 
 It makes sense to skip sorting work if all radices for a pass fall into the same bin.
 
@@ -107,9 +107,9 @@ However, we have already built a histogram for all passes before sorting. The id
 The main drawback of this technique is probabilistic: it is significantly less likely for all radices in the entire array to fall into a single bin than for keys within a single block to do so. This means that, on average, _early-exiting_ triggers less frequently than block-level _short-circuiting_. 
 However, when it does trigger, it skips an entire pass, leading to more substantial speedups (the onesweep kernel is not called, so no GPU work is performed for that pass, aside from the copy to host). In contrast, short-circuiting occurs more often but yields smaller gains per occurrence.
 
-It is worth noting that this optimization is experimental and is not enabled by default (check EXIT_EARLY_OPT in the user knobs of "radix_kernel.cuh"). Still, given the low overhead of generating the skip mask (_e.g._, copying and evaluating ~1 KB of histogram data for 32-bit keys assuming an 8-bit radix), I'd argue a fully-fledged GPU radix sort would ideally use both approaches together, since they operate at different levels.
+It is worth noting that this optimization is experimental and is not enabled by default (check EXIT_EARLY_OPT in the user knobs of [radix_kernel.cuh](radix_kernel.cuh)). Still, given the low overhead of generating the skip mask (_e.g._, copying and evaluating ~1 KB of histogram data for 32-bit keys assuming an 8-bit radix), I'd argue a fully-fledged GPU radix sort would ideally use both approaches together, since they operate at different levels.
 
-#### Fantastic GPU micro-optimizations and where to find them
+### Fantastic GPU micro-optimizations and where to find them
 
 Honestly, I don't know.
 
@@ -180,7 +180,7 @@ Configuration used for all  experiments:
 
 Unless expressed otherwise, all collected data points represent an average of 30 runs, with a warmup of at least 250 ms (or 10 runs, whichever takes longer). This will be referred to as the _steady-state_ configuration.
 The warmup metric was chosen with the goal of tightening the standard deviation between runs as much as possible, not to bias any of the approaches.
-In addition, all experiments correspond to sorting unsigned keys in ascending order, randomly initialized with a standard avalanche bit mixer (check _init_keys_ kernel in "radix/utils.cuh").  All graphs show throughput instead of timings in number of elements sorted per second - _el/s_). This project's implementation is referred to as _rsort_.
+In addition, all experiments correspond to sorting unsigned keys in ascending order, randomly initialized with a standard avalanche bit mixer (check _init_keys_ kernel in [utils.cuh](radix/utils.cuh)).  All graphs show throughput instead of timings in number of elements sorted per second - _el/s_). This project's implementation is referred to as _rsort_.
 
 ### Scaling Behavior
 
@@ -194,7 +194,7 @@ It's interesting to note the drop in throughput from 2<sup>28</sup> elements onw
 
 For 64-bit keys, the story changes slightly. Whereas rsort had the biggest advantage for 32-bit keys of smaller sizes, CUB now stays ahead for arrays of 2<sup>20</sup>, 64-bit elements. It is unclear to me why this change happens. rsort uses 448 threads per block and 6 items per thread to sort 64-bit keys; changing the policy to match CUB's geometry seems to yield very similar results. Changing other knobs in Rsort's reorder and lookback policy does not seem to move performance significantly either. As the array size increases, CUB gradually loses the performance advantage in the next two size jumps. Eventually, rsort stabilizes at about a 4% performance gain with a peak throughput of around 5.92B el/s, before falling to a 2.6% gain when turning off the lookback epoch policy at an array size of 2<sup>28</sup>. CUB's throughput peaks at around 5.69B el/s.
 
-Overall, standard deviations seem to be tighter for rsort across most sizes, although for 64-bit keys, CUB seems to present less jitter on average (check "graphs/benchmark_data.py"). Worth noting that, in my testing, even using an average of 30 runs along with a hefty warmup configuration, standard deviation still varies quite a bit from run to run, so it is better to focus on the global picture and not read too much into specific values.
+Overall, standard deviations seem to be tighter for rsort across most sizes, although for 64-bit keys, CUB seems to present less jitter on average (check [benchmark_data](graphs/benchmark_data.py)). Worth noting that, in my testing, even using an average of 30 runs along with a hefty warmup configuration, standard deviation still varies quite a bit from run to run, so it is better to focus on the global picture and not read too much into specific values.
 
 <p align="center">
   <img src="graphs/scaling_uint8_t.png" width="45%" />
@@ -270,8 +270,8 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 ### Notes (READ!):
 
-- Due to heavy template instantiation, validation is disabled by default. The toggle is the single "VALIDATION_TEST" macro at the start of the main file. 
-- You can use the macros at the start of "validate_sort.cuh" to change the set of data types to check validation for. Some other standard subsets are provided, or you can define your own.
+- Due to heavy template instantiation, validation is disabled by default. The toggle is the single "VALIDATION_TEST" macro at the start of the main file.
+- You can use the macros at the start of [validate_sort.cuh](validate_sort.cuh) to change the set of data types to check validation for. Some other standard subsets are provided, or you can define your own.
 
 ## Failed Experiments
 
@@ -286,7 +286,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 - This implementation is not intended to be production-ready (in its current state). It is a proof of concept and is not a drop-in replacement for CUB.
 
-- For convenience, a monolithic single-header version is provided in "monolithic/rsort.cuh". The main implementation remains split across files for readability. This monolithic version might not be up to date with development!
+- For convenience, a monolithic single-header version is provided in [monolithic/rsort.cuh](monolithic/rsort.cuh). The main implementation remains split across files for readability. This monolithic version might not be up to date with development!
 
 - The implementation was tested on a single GPU (mine). Cross-device results may vary.
 
