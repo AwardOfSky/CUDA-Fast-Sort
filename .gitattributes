@@ -1,0 +1,14 @@
+# Normalize line endings
+* text=auto
+
+# Diffs 
+*.png binary
+*.jpg binary
+
+# Line endings
+*.cu text
+*.cuh text
+*.cpp text
+*.h text
+*.hpp text
+*.py text
