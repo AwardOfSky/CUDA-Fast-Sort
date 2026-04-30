@@ -71,31 +71,35 @@ struct Radix_Ranker {
         const int bin_owner = threadIdx.x < RADIX_BIN_SIZE;
         uint8_t digits[ITEMS_PER_THREAD];
 
+        // read radices
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             digits[u] = (uint8_t)extract_byte<U>(keys[u], bit_location);
         }
 
-        // Warp-private histogram
+        // init offsets
         int* warp_offsets = &temp_storage.warp_offsets[warp][0];
         #pragma unroll
         for (int bin = lane; bin < RADIX_BIN_SIZE; bin += WARP_SIZE) {
             warp_offsets[bin] = 0;
         }
-        __syncwarp(0xFFFFFFFFu); // TODOs is this needed, why does it work with 0?
+        __syncwarp(0xFFFFFFFFu); // do not remove
 
+        // Warp-private histogram
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             atomicAdd(&warp_offsets[(uint32_t)digits[u]], 1);
         }
 
-        // Block-wide upsweep + callback
+        // Block-wide upsweep
         __syncthreads();
         int bins = 0;
         if (bin_owner) {
             const int bin = (int)threadIdx.x;
             int* warp_bin_ptr = &temp_storage.warp_offsets[0][bin];
             int* warp_bin_it = warp_bin_ptr;
+
+            // warp partials scan
             #pragma unroll
             for (int j = 0; j < REORDER_WARPS; ++j) {
                 int count = *warp_bin_it;
@@ -104,6 +108,7 @@ struct Radix_Ranker {
                 warp_bin_it += RADIX_BIN_SIZE;
             }
 
+            // callback
             uint32_t b = (uint32_t)bin;
             uint32_t published = (uint32_t)bins;
             if constexpr (!Full_Tile) {
@@ -120,7 +125,6 @@ struct Radix_Ranker {
         }
 
         // Block scan over per-bin counts
-        //(threadIdx.x < Limit) ? (bin_owner ? (uint32_t)bins : 0u) : 0u
         exclusive_digit_prefix = (int)block_exclusive_scan_256(
             bin_owner ? (uint32_t)bins : 0u,
             temp_storage.scan_warp_sums
@@ -142,7 +146,7 @@ struct Radix_Ranker {
         // Per-item rank within the warp/bin
         warp_offsets = &temp_storage.warp_offsets[warp][0];
         const int lane_mask_le = (int)lane_mask_le_u32();
-
+ 
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             uint32_t key_bin = (uint32_t)digits[u];

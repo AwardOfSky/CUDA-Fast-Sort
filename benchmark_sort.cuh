@@ -1,4 +1,3 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe
 // Benchmark header
 #pragma once
 
@@ -11,6 +10,8 @@
 
 namespace rsort {
 
+// Reconstructs the digit histogram for the last pass and checks count of each radix
+// in the sorted array to assert if sorted output has the same counts.
 template <bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T>
 static bool verify_digit_histograms_preserved(
     const Key_T* d_sorted,
@@ -91,6 +92,7 @@ static bool verify_digit_histograms_preserved(
 }
 
 
+// Verify histogram according to mode
 template <bool Descending, typename Key_T, typename Len_T>
 static bool verify_hist_by_mode(
     Lookback_Modes mode,
@@ -115,11 +117,13 @@ static bool verify_hist_by_mode(
 }
 
 
+// Benchmarking function (entry point of the sort)
 template<bool Descending, typename T, typename Len_T>
 int benchmark(
     Len_T n,
     uint32_t iters,
     uint32_t warmups,
+    uint32_t warm_ms,
     Array_Modes arr_mode,
     bool validation = false) {
 
@@ -140,6 +144,7 @@ int benchmark(
         }
     };
 
+    // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
     launch_sorting_kernel();
     CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
@@ -166,11 +171,11 @@ int benchmark(
     };
 
     // warmup
-    double warm_ms = 0.0;
+    double warm_ms_passed = 0.0;
     uint32_t warmups_done = 0;
     uint32_t seed_counter = 0;
-    while (warmups_done < warmups || (!validation && (warm_ms < MIN_WARMUP_MS))) {
-        warm_ms += run_timed_iteration(set_seed_radix(seed_counter++));
+    while ((warmups_done < warmups) || (!validation && (warm_ms_passed < (double)warm_ms))) {
+        warm_ms_passed += run_timed_iteration(set_seed_radix(seed_counter++));
         ++warmups_done;
     }
 

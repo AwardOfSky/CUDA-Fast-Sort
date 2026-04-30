@@ -102,6 +102,7 @@ __device__ __forceinline__ uint32_t block_exclusive_scan_256(
 }
 
 
+// Main histogram kernel performaing a global count of all passes
 template <bool Descending, typename Lookback_T, typename Key_T, typename Len_T, bool DYNAMIC_WORK_STEAL = true>
 __global__ void GHistogram_8bits(
     const Key_T* __restrict__ inputs,
@@ -120,6 +121,7 @@ __global__ void GHistogram_8bits(
     constexpr uint32_t GHIST_ITEM_PER_BLOCK = H::GHIST_ITEM_PER_BLOCK;
     constexpr uint32_t SCAN256_WARPS = H::SCAN256_WARPS;
     constexpr uint32_t EXCLUSIVE_SCAN_256 = H::EXCLUSIVE_SCAN_256;
+    using U = get_unsigned_of<Key_T>;
 
 
     __shared__ uint32_t local_counters[RADIX_PASSES][RADIX_BIN_SIZE];
@@ -138,52 +140,49 @@ __global__ void GHistogram_8bits(
     }
     __syncthreads();
 
-    Len_T num_blocks = div_round_up<Len_T>(n, GHIST_ITEM_PER_BLOCK);
+    // work load definition
+    auto histogram_chunk = [&](Len_T block_ind) {
+        #pragma unroll
+        for (int j = 0; j < GHIST_ITEMS_PER_THREAD; ++j) {
+            Len_T idx = block_ind * GHIST_ITEM_PER_BLOCK + threadIdx.x * GHIST_ITEMS_PER_THREAD + (Len_T)j;
+            if (idx < n) {
+                U item = twiddle_in<Descending, Key_T>(inputs[idx]);
+                #pragma unroll
+                for (int p = 0; p < RADIX_PASSES; ++p) {
+                    U bit = start_bits + (U)p * RADIX_BITS;
+                    U b = extract_byte<U>(item, bit);
+                    atomicAdd(&local_counters[p][b], 1u);
+                }
+            }
+        }
+    };
 
-    using U = get_unsigned_of<Key_T>;
-    if constexpr (DYNAMIC_WORK_STEAL) { // Dynamic work stealing
+    // Dynamic work stealing - faster but only safe if each block's bin count fit 32-bits
+    // always true if using using 32-bit lookback
+    Len_T num_blocks = div_round_up<Len_T>(n, GHIST_ITEM_PER_BLOCK);
+    if constexpr (DYNAMIC_WORK_STEAL) {
         for (;;) {
-            __shared__ uint32_t i_block; // TODOs: should block and counter be key_t
+
+            // global counter
+            __shared__ uint32_t i_block;
             if (threadIdx.x == 0) {
                 i_block = atomicInc(counter, 0xFFFFFFFFu);
             }
             __syncthreads();
+
+            // stop condition
             if ((Len_T)i_block >= num_blocks) {
                 break;
             }
 
-            #pragma unroll
-            for (int j = 0; j < GHIST_ITEMS_PER_THREAD; ++j) {
-                Len_T idx = i_block * GHIST_ITEM_PER_BLOCK + threadIdx.x * GHIST_ITEMS_PER_THREAD + (Len_T)j;
-                if (idx < n) {
-                    U item = twiddle_in<Descending, Key_T>(inputs[idx]);
-                    #pragma unroll
-                    for (int p = 0; p < RADIX_PASSES; ++p) {
-                        U bit = start_bits + (U)p * RADIX_BITS;
-                        U b = extract_byte<U>(item, bit);
-                        atomicAdd(&local_counters[p][b], 1u);
-                    }
-                }
-            }
+            histogram_chunk(i_block);
             __syncthreads();
         }
     } else {
         // Fixed CTA striding. With 32 bit n, the maximum items seen by one CTA is
         // ceil(num_blocks / gridDim.x) * GHIST_ITEM_PER_BLOCK <= n, so uint32 locals stay safe.
         for (uint32_t i_block_fixed = (uint32_t)blockIdx.x; i_block_fixed < num_blocks; i_block_fixed += (uint32_t)gridDim.x) {
-            #pragma unroll
-            for (int j = 0; j < GHIST_ITEMS_PER_THREAD; ++j) {
-                Len_T idx = i_block_fixed * GHIST_ITEM_PER_BLOCK + threadIdx.x * GHIST_ITEMS_PER_THREAD + (Len_T)j;
-                if (idx < n) {
-                    U item = twiddle_in<Descending, Key_T>(inputs[idx]);
-                    #pragma unroll
-                    for (int p = 0; p < RADIX_PASSES; ++p) {
-                        U bit = start_bits + (U)p * RADIX_BITS;
-                        U b = extract_byte<U>(item, bit);
-                        atomicAdd(&local_counters[p][b], 1u);
-                    }
-                }
-            }
+            histogram_chunk(i_block_fixed);
             __syncthreads();
         }
     }

@@ -16,6 +16,7 @@ void print_usage(const char* exe_name) {
         "  --n <value>            Number of elements\n"
         "  --iterations <value>   Timed iterations\n"
         "  --warmup <value>       Warmup iterations\n"
+        "  --warmup_ms <value>    Minimum warmup time (ms)\n"
         "  --descending           Sort descending\n"
         "  --validation           Validate algorithm\n"
         "  --help                 Show this help\n",
@@ -24,6 +25,7 @@ void print_usage(const char* exe_name) {
 }
 
 
+// simple string to unsigned parser
 template<typename T>
 bool parse_u(const char* s, T* out_value) {
     if (!s || !*s) {
@@ -46,6 +48,7 @@ bool parse_u(const char* s, T* out_value) {
 }
 
 
+// quick parser
 bool args(int argc, char** argv, Global_Config* conf) {
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -84,8 +87,16 @@ bool args(int argc, char** argv, Global_Config* conf) {
                 printf("Error: invalid value for --warmup: %s\n", argv[i]);
                 return false;
             }
-        }
-        else {
+        } else if (!strcmp(arg, "--warmup_ms")) {
+            if (i + 1 >= argc) {
+                printf("Error: missing value after --warmup_ms\n");
+                return false;
+            }
+            if (!parse_u<uint32_t>(argv[++i], &conf->warm_ms)) {
+                printf("Error: invalid value for --warmup_ms: %s\n", argv[i]);
+                return false;
+            }
+        } else {
             printf("Error: unknown argument: %s\n", arg);
             return false;
         }

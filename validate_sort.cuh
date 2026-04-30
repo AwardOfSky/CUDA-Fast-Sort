@@ -1,4 +1,3 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu -o radix_gpu.exe
 // Validation header
 #pragma once
 
@@ -13,9 +12,6 @@
 #define VALIDATION_TEST     1
 #endif 
 
-// in ms
-#define COOL_BETWEEN_RUNS   0.0
-
 
 // ===================== Validation Types =====================
 #define U32_TYPE    uint32_t,
@@ -24,12 +20,15 @@
 #define FP_TYPES    float, double,
 #define ALL_TYPES   INT_TYPES FP_TYPES
 
-// Change types to test HERE!
+// Change types to test HERE!!!
 #define TYPE_SET_TEST ALL_TYPES
 // ============================================================
 
 
 namespace rsort {
+
+// in ms 
+#define COOL_BETWEEN_RUNS   0.0
 
 template<typename... Ts> struct type_list {};
 
@@ -39,6 +38,8 @@ using radix_test_types = type_list<
 #endif
 >;
 
+
+// Simple counter struct for validation tests
 struct Validation_Result {
     uint32_t tests = 0;
     uint32_t passed = 0;
@@ -59,6 +60,7 @@ struct Validation_Result {
 };
 
 
+// Benchmark entry point of the validation
 template<typename T>
 Validation_Result validate_radix_type(
     bool descending,
@@ -99,6 +101,7 @@ Validation_Result validate_radix_type(
 }
 
 
+// Validate accoring to list of types
 template<typename... Ts>
 Validation_Result validate_radix_wrap(
     bool desc,
@@ -144,6 +147,7 @@ struct validate_radix_list<type_list<Ts...>> {
 };
 
 
+// validation entry point
 bool validate(bool all_modes, bool desc, int iter, int warm) {
     Validation_Result total;
 

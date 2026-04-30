@@ -17,8 +17,9 @@
 template<bool Descending, typename T, typename Len_T>
 int benchmark_cub(
 Len_T n,
-uint32_t warmups,
 uint32_t iters,
+uint32_t warmups,
+uint32_t warm_ms,
 rsort::Array_Modes arr_mode,
 bool validation = false);
 
@@ -35,18 +36,24 @@ int main(int argc, char** argv) {
 
     // Benchmark example
     bool ret = benchmark_cub<false, uint32_t>(
-        conf.n, conf.iterations, conf.warmups, rsort::Array_Modes::random
+        conf.n,
+        conf.iterations,
+        conf.warmups,
+        conf.warm_ms,
+        rsort::Array_Modes::random
     );
 
     return 0;
 }
 
 
+// based on rsort's benchmarking template
 template<bool Descending, typename T, typename Len_T>
 int benchmark_cub(
     Len_T n,
     uint32_t iters,
     uint32_t warmups,
+    uint32_t warm_ms,
     rsort::Array_Modes arr_mode,
     bool validation) {
 
@@ -63,6 +70,7 @@ int benchmark_cub(
         }
     };
 
+    // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
     CHECK_CUDA(cudaMalloc(&d_out, sizeof(T) * n));
     launch_sorting_kernel();
@@ -90,11 +98,11 @@ int benchmark_cub(
     };
 
     // warmup
-    double warm_ms = 0.0;
+    double warm_ms_passed = 0.0;
     uint32_t warmups_done = 0;
     uint32_t seed_counter = 0;
-    while (warmups_done < warmups || (!validation && (warm_ms < MIN_WARMUP_MS))) {
-        warm_ms += run_timed_iteration(rsort::set_seed_radix(seed_counter++));
+    while ((warmups_done < warmups) || (!validation && (warm_ms_passed < (double)warm_ms))) {
+        warm_ms_passed += run_timed_iteration(rsort::set_seed_radix(seed_counter++));
         ++warmups_done;
     }
 

@@ -31,6 +31,7 @@ static_assert(
 // Lookback templating
 template <typename T, bool Epoch> struct Lookback_Config;
 
+// 32-bit lookback specialization
 template<bool Epoch>
 struct Lookback_Config<uint32_t, Epoch> {
     static constexpr uint32_t PARTIAL_MASK  = 1u << 30;
@@ -45,7 +46,7 @@ struct Lookback_Config<uint32_t, Epoch> {
     static constexpr uint32_t EPOCH_TAG_WORD    = EPOCH_TAG * 0x01010101u;
 };
 
-
+// 64-bit lookback specialization
 template<bool Epoch>
 struct Lookback_Config<uint64_t, Epoch> {
     static constexpr uint64_t PARTIAL_MASK  = 1ull << 62;
@@ -61,13 +62,7 @@ struct Lookback_Config<uint64_t, Epoch> {
 };
 
 
-enum class Lookback_Modes : uint32_t {
-    u32_epoch,
-    u32_plain,
-    u64_epoch
-};
-
-
+// Policy Base
 template <typename T_, bool Epoch, bool Reuse>
 struct Lookback_Policy_Base {
     using T = T_;
@@ -89,11 +84,19 @@ struct Lookback_Policy_Base {
     }
 };
 
+
+enum class Lookback_Modes : uint32_t {
+    u32_epoch,
+    u32_plain,
+    u64_epoch
+};
+
 template <Lookback_Modes Mode> struct Lookback_Policy;
 
 
-// ================== Lookback Policy definitions ==================
-// Type, Epoch, Reuse 
+// ================== Lookback Policy definitions ================== 
+
+// Policy Specializations <Type, Epoch, Reuse>
 
 template <>
 struct Lookback_Policy<Lookback_Modes::u32_epoch>
@@ -115,6 +118,7 @@ using Fast_LB_Policy    = Lookback_Policy<Lookback_Modes::u32_plain>;
 using General_LB_Policy = Lookback_Policy<Lookback_Modes::u64_epoch>;
 
 
+// Policy selector
 static constexpr inline void print_lookback_policy(Lookback_Modes mode) { 
     switch(mode) {
         case Lookback_Modes::u32_epoch:
@@ -130,6 +134,8 @@ static constexpr inline void print_lookback_policy(Lookback_Modes mode) {
             break;
     }
 }
+
+
 
 // Note: LOOKBACK_OVERRIDE forces behaviour within a mode, does not change the policy. Be careful!!!
 static inline Lookback_Modes get_lookback_mode(size_t n) {
@@ -158,6 +164,8 @@ struct Lookback {
     static constexpr uint32_t RADIX_BIN_SIZE = radix_consts::RADIX_BIN_SIZE;
     static constexpr uint32_t RADIX_BITS = radix_consts::RADIX_BITS;
 
+
+    // packing functions, always pack epoch bits along with publish state
     static __device__ __forceinline__ T pack_global(T val, T epoch_bits) {
         if constexpr(Epoch) {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK | epoch_bits;
@@ -187,8 +195,8 @@ struct Lookback {
     }
 
 
-    // No need for check for 0 if using Epoch bits because
-    // lookback will be EPOCH_TAG filled for the first pass
+    // Note: No need to check for 0 if using Epoch bits because
+    // lookback will be EPOCH_TAG filled for the first pass (and on epoch wrap)
     static __device__ __forceinline__ bool invalid_lookback_state(T raw, T lb) {
         if constexpr(Epoch) {
             //return ((raw & LB::EPOCH_MASK) != lb) || (raw == 0u);
@@ -218,6 +226,7 @@ struct Lookback {
     }
 
 
+    // helpers
     static __device__ __forceinline__ void wait_valid_lookback_state(T* raw, const volatile T* ptr, T epoch_bits) {
         do {
             *raw = *ptr;
@@ -235,6 +244,8 @@ struct Lookback {
     }
 
 
+    // Main lookback function, decoupled, partial publishing
+    // less branching (more register pressure?)
     static __device__ __forceinline__ typename Policy::T lookback_prefix(
         const volatile typename Policy::T* __restrict__ lookback_bin,
         uint32_t block_index,
@@ -249,6 +260,9 @@ struct Lookback {
         const volatile T* ptr = lookback_bin + ((block_index - 1) << RADIX_BITS);
         T raw = *ptr;
 
+        // change spin/verifications according to how hot the path is
+        // 0 SPINS we lose the oppurtiny to exit
+        // more than 1 we just spin our wheels, might be good for less items per thread
         #pragma unroll
         for (int i = 0; i < LOOKBACK_SPINS; ++i) {
             if (valid_global_lookback_state(raw, lb_epoch_bits)) {
@@ -277,6 +291,9 @@ struct Lookback {
     }
 
 
+    // old version of the lookback:
+    // seems to be slightly worse in most cases because of the extra branch,
+    // but it's mostly codegen. Still, worth testing in new configurations 
     static __device__ __forceinline__ typename Policy::T lookback_prefix_old(
         const volatile typename Policy::T* __restrict__ lookback_bin,
         uint32_t block_index,

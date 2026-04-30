@@ -1,6 +1,4 @@
-
 // Utils header
-// TODOs refactor unsigned_of?
 #pragma once
 
 #include <cuda_runtime.h>
@@ -126,6 +124,7 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
+// Tuning (extends constants)
 struct radix_consts {
     static constexpr uint32_t RADIX_BITS = 8;
     static constexpr uint32_t RADIX_BIN_SIZE = 1u << RADIX_BITS;
@@ -181,7 +180,8 @@ struct radix_type_traits {
     using native_i128 = int64_t;
     static constexpr bool has_native_u128 = false;
 #endif
-    static constexpr bool type_is_valid_128 = std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
+    static constexpr bool type_is_valid_128 = 
+        std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
 
 
     // type compliance asserts 
@@ -198,6 +198,7 @@ struct radix_type_traits {
     // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort
 
 
+    // set quivalent unsigned type
     using unsigned_of =
         std::conditional_t<sizeof(T) == 1, uint8_t,
         std::conditional_t<sizeof(T) == 2, uint16_t,
@@ -208,7 +209,7 @@ struct radix_type_traits {
     static constexpr bool is_signed_integral = std::is_signed_v<T> && std::is_integral_v<T>;
     static constexpr unsigned_of sign_mask_of = unsigned_of(1) << (sizeof(T) * 8 - 1);
 
-
+    // unsigned and type T bit convertion (for twiddling)  
     static __device__ __forceinline__ T bits_to_type(unsigned_of x) {
         if constexpr(std::is_same_v<T, float>) {
             return __uint_as_float(x);
@@ -231,7 +232,7 @@ struct radix_type_traits {
     }
 
 
-    //quick and dirty estimation
+    // quick and dirty array size estimation
     static uint32_t __host__ max_array_bits(uint32_t vram_gb) {
         if (vram_gb == 0) {
             return 0;
@@ -280,6 +281,7 @@ __device__ __forceinline__ get_unsigned_of<T> tail_filler_bits() {
 }
 
 
+// twiddling kernels
 template <bool Descending, typename T>
 __host__ __device__ __forceinline__ get_unsigned_of<T> twiddle_in(T x) {
     using U = get_unsigned_of<T>;
@@ -443,8 +445,6 @@ double stdev(const T* arr, double avg, size_t n) {
     return std::sqrt(acc / (double)n);
 }
 
-
-#define MIN_WARMUP_MS 250.0f
 
 void sleep_ms(long milliseconds) {
 #if defined(_WIN32)
