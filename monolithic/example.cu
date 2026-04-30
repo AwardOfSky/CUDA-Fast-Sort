@@ -1,28 +1,6 @@
 // Compile:
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
-
-/* 
-    TODOs:
-    - change C-style pointers to C++ style
-    - add suport for long doubles
-    - key pair types
-*/
-
-
-#include <cuda_runtime.h>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-
-#include "radix_kernel.cuh"
-#include "benchmark_sort.cuh"
-#include "bench_parser.h"
-
-// Template heavy, only enable if you want to run validation
-#define VALIDATION_TEST     0
-#include "validate_sort.cuh"
-
+// nvcc -O3 -std=c++17 -arch=sm_86 example.cu -o rsort.exe
+#include "rsort.cuh"
 
 int main(int argc, char** argv) {
     // bench_parser.h for default values

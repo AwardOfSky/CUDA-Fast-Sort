@@ -105,4 +105,4 @@ bool args(int argc, char** argv, Global_Config* conf) {
     return true;
 }
 
-} //namespace bench
+} // namespace parse

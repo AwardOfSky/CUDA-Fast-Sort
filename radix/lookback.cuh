@@ -136,7 +136,6 @@ static constexpr inline void print_lookback_policy(Lookback_Modes mode) {
 }
 
 
-
 // Note: LOOKBACK_OVERRIDE forces behaviour within a mode, does not change the policy. Be careful!!!
 static inline Lookback_Modes get_lookback_mode(size_t n) {
     using LB = Lookback_Config<uint32_t, true>;
