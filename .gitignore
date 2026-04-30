@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+bin/
+*.o
+*.obj
+*.exe
+*.out
+*.cubin
+
+# CUDA / NVCC temp
+*.fatbin
+*.ptx
+*.sass
+
+# OS stuff
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
