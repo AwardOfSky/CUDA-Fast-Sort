@@ -185,8 +185,8 @@ In addition, all experiments correspond to sorting unsigned keys in ascending or
 ### Scaling Behavior
 
 <p align="center">
-  <img src="graphs/scaling_uint32_t.png" width="45%" />
-  <img src="graphs/scaling_uint64_t.png" width="45%" />
+  <img src="graphs/scaling_uint32_t.png" width="48%" />
+  <img src="graphs/scaling_uint64_t.png" width="48%" />
 </p>
 
 For 32-bit keys, rsort is faster across all tested array sizes, from 2<sup>20</sup> to 2<sup>29</sup> elements. Speedups are more pronounced for smaller arrays, starting in the double digits and eventually stabilizing around 3% as peak throughput is reached. Peak throughput for rsort is reached around 22.4B el/s for 2<sup>27</sup> elements. CUB peaks slightly lower, at around 21.9B el/s reached at 2<sup>28</sup> elements.
@@ -197,8 +197,8 @@ For 64-bit keys, the story changes slightly. Whereas rsort had the biggest advan
 Overall, standard deviations seem to be tighter for rsort across most sizes, although for 64-bit keys, CUB seems to present less jitter on average (check [benchmark_data](graphs/benchmark_data.py)). Worth noting that, in my testing, even using an average of 30 runs along with a hefty warmup configuration, standard deviation still varies quite a bit from run to run, so it is better to focus on the global picture and not read too much into specific values.
 
 <p align="center">
-  <img src="graphs/scaling_uint8_t.png" width="45%" />
-  <img src="graphs/scaling_uint16_t.png" width="45%" />
+  <img src="graphs/scaling_uint8_t.png" width="48%" />
+  <img src="graphs/scaling_uint16_t.png" width="48%" />
 </p>
 
 For 8 and 16 bits, rsort wins more clearly all around. The CTA geometry used by rsort for both cases is the same as for 32 bits. As far as I could tell, CUB does not use onesweep for keys smaller than 32 bits on sm_86, and the radix is also smaller than 8 bits. I'm not sure of the reasons behind this choice. Perhaps memory management, although looking at memory consumption, the two algorithms do not seem significantly different. Still, this means these two graphs are not comparing implementations of the same algorithm at all anymore.
@@ -219,7 +219,7 @@ These benchmarks were carried out in _steady-state_ with significant warmup. Thi
 </p>
 
 In this experiment, CUB achieves a throughput of 21.7B el/s on _steady-state_ vs. 21.5B el/ for  _cold-state_, corresponding to a performance drop of around 1%. In turn, rsort manages 22.4B el/s for _steady-state_ vs 22.2B el/s on _cold-state_, which translates to a 0.7% drop. This corresponds to an advantage of around 3.1% for rsort in _steady-state_ and 3.3% in _cold-state_. 
-Standard deviations are just slightly tighter for rsort in both states. However, to establish a pattern for _cold_state_ would necessitate more extensive scaling benchmarking, as done for _steady-state_.
+Standard deviations are just slightly tighter for rsort in both states. However, to establish a pattern for _cold-state_ would necessitate more extensive scaling benchmarking, as done for _steady-state_.
 
 ### Short-Circuiting vs. Early-Exiting
 

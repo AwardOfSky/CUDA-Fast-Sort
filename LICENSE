@@ -1,10 +1,9 @@
-================================================================================
+--------------------------------------------------------------------------------
 Acknowledgments:
 
 Parts of this implementation were developed with reference to NVIDIA CCCL (CUB):
 https://github.com/NVIDIA/cccl. CUB is licensed under the Apache License 2.0.
-================================================================================
-
+--------------------------------------------------------------------------------
 MIT License
 
 Copyright (c) 2026 Francisco Baeta
