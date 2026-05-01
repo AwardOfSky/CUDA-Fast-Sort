@@ -311,3 +311,8 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 																									🎤
 </pre>
 -->
+
+## Contact
+
+Email: fjrbaeta@gmail.com 
+
