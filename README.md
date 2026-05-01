@@ -294,6 +294,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 ## TODOs
 
 - Implmenting pairs and other features for completeness.
+- Investigate performance for arrays smaller than 32 than 2<sup>20</sup> elements. Preliminary testing seems to indicate performance continues to scale down, but 64 bits still seems to be an issue.
 - Investigate integrating or aligning with benchmarking approaches used in NVIDIA/cccl to improve consistency. I wasn't aware of the bench suite when writing this benchmark.
 - **Optimizations**: Some ideas for ranker work distribution still to test; lookback configurations; improve memory alignment overall; etc. 
   
