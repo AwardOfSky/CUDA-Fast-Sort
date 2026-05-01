@@ -3,7 +3,7 @@
 
 A CUDA implementation of Radix Sort based on [NVIDIA CUB's](https://github.com/NVIDIA/cccl/tree/main/cub) onesweep.
 
-Initially motivated by [this article](https://gpuopen.com/learn/boosting_gpu_radix_sort/), this project started as a small educational endeavour to get familiar with CUDA and delve deeper into C++.
+Initially motivated by the GPUOpen article on [boosting GPU radix sort performance](https://gpuopen.com/learn/boosting_gpu_radix_sort/), this project started as a small educational endeavour to get familiar with CUDA and delve deeper into C++.
 The original goal was simply to build a radix sort for the GPU from scratch, without relying on third-party kernels.
 
 However, as my understanding of CUDA and parallel programming improved, I began exploring ways to make the implementation more efficient, eventually leading me to CUB’s own implementation as a better reference point.
@@ -304,7 +304,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 ## Sources
 
-- GPUOpen article - https://gpuopen.com/learn/boosting_gpu_radix_sort/
+- Boosting GPU Radix Sort performance: A memory-efficient extension to Onesweep with circular buffers - https://gpuopen.com/learn/boosting_gpu_radix_sort/
 - Onesweep Radix Sort - https://developer.download.nvidia.com/video/gputechconf/gtc/2020/presentations/s21572-a-faster-radix-sort-implementation.pdf
 - NVIDIA CCCL - https://github.com/NVIDIA/cccl/tree/main/cub
 - CUDA docs - https://docs.nvidia.com/cuda/cuda-runtime-api/index.html
