@@ -285,35 +285,25 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 ## Notes and Disclaimers
 
 - This implementation is not intended to be production-ready (in its current state). It is a proof of concept and is not a drop-in replacement for CUB.
-
 - For convenience, a monolithic single-header version is provided in [monolithic/rsort.cuh](monolithic/rsort.cuh). The main implementation remains split across files for readability. This monolithic version might not be up to date with development!
-
 - The implementation was tested on a single GPU (mine). Cross-device results may vary.
-
 - The optimizations explored here are, to the best of my knowledge, not widely documented in existing GPU radix sort literature, hence this project.
-
 - Part of the point of this implementation was to prove the optimizations can be carried out without loss of generality and without getting in the way of other features.
 
 
 ## TODOs
 
 - Implmenting pairs and other features for completeness.
-
 - Investigate integrating or aligning with benchmarking approaches used in NVIDIA/cccl to improve consistency. I wasn't aware of the bench suite when writing this benchmark.
-
 - **Optimizations**: Some ideas for ranker work distribution still to test; lookback configurations; improve memory alignment overall; etc. 
   
 
 ## Sources
 
 - GPUOpen article - https://gpuopen.com/learn/boosting_gpu_radix_sort/
-
 - Onesweep Radix Sort - https://developer.download.nvidia.com/video/gputechconf/gtc/2020/presentations/s21572-a-faster-radix-sort-implementation.pdf
-
 - NVIDIA CCCL - https://github.com/NVIDIA/cccl/tree/main/cub
-
 - CUDA docs - https://docs.nvidia.com/cuda/cuda-runtime-api/index.html
-
 - Several CUDA YouTube talks - https://youtu.be/GmNkYayuaA4?t=430 - I'm available if the offer still stands 🙂
 <!--
 <pre>
