@@ -20,7 +20,7 @@
 #include "bench_parser.h"
 
 // Template heavy, only enable if you want to run validation
-#define VALIDATION_TEST     1
+#define VALIDATION_TEST     0
 #include "validate_sort.cuh"
 
 
