@@ -184,13 +184,13 @@ In addition, all experiments correspond to sorting unsigned keys in ascending or
 
 ### Scaling Behavior
 
+For 32-bit keys, rsort is faster across all tested array sizes, from 2<sup>20</sup> to 2<sup>29</sup> elements. Speedups are more pronounced for smaller arrays, starting in the double digits and eventually stabilizing around 3% as peak throughput is reached. Peak throughput for rsort is reached around 22.4B el/s for 2<sup>27</sup> elements. CUB peaks slightly lower, at around 21.9B el/s reached at 2<sup>28</sup> elements.
+It's interesting to note the drop in throughput from 2<sup>28</sup> elements onwards for rsort, as it coincides with the policy change that disables epoch bits in the lookback path. Surprisingly, rsort still leads by around 2% with epoch bits turned off.  For 32 bits, rsort uses 21 items per thread and 384 threads per block, which, as far as I can tell, is the same CTA geometry CUB uses for this scenario in sm_86. Rsort pipeline being optimized for an 8-bit radix onesweep makes a strong case against CUB's more general policies, at least for high-throughput scenarios. Lookback epoch bits seem to provide the largest relative advantage for smaller arrays.
+
 <p align="center">
   <img src="graphs/scaling_uint32_t.png" width="48%" />
   <img src="graphs/scaling_uint64_t.png" width="48%" />
 </p>
-
-For 32-bit keys, rsort is faster across all tested array sizes, from 2<sup>20</sup> to 2<sup>29</sup> elements. Speedups are more pronounced for smaller arrays, starting in the double digits and eventually stabilizing around 3% as peak throughput is reached. Peak throughput for rsort is reached around 22.4B el/s for 2<sup>27</sup> elements. CUB peaks slightly lower, at around 21.9B el/s reached at 2<sup>28</sup> elements.
-It's interesting to note the drop in throughput from 2<sup>28</sup> elements onwards for rsort, as it coincides with the policy change that disables epoch bits in the lookback path. Surprisingly, rsort still leads by around 2% with epoch bits turned off.  For 32 bits, rsort uses 21 items per thread and 384 threads per block, which, as far as I can tell, is the same CTA geometry CUB uses for this scenario in sm_86. Rsort pipeline being optimized for an 8-bit radix onesweep makes a strong case against CUB's more general policies, at least for high-throughput scenarios. Lookback epoch bits seem to provide the largest relative advantage for smaller arrays.
 
 For 64-bit keys, the story changes slightly. Whereas rsort had the biggest advantage for 32-bit keys of smaller sizes, CUB now stays ahead for arrays of 2<sup>20</sup>, 64-bit elements. It is unclear to me why this change happens. rsort uses 448 threads per block and 6 items per thread to sort 64-bit keys; changing the policy to match CUB's geometry seems to yield very similar results. Changing other knobs in Rsort's reorder and lookback policy does not seem to move performance significantly either. As the array size increases, CUB gradually loses the performance advantage in the next two size jumps. Eventually, rsort stabilizes at about a 4% performance gain with a peak throughput of around 5.92B el/s, before falling to a 2.6% gain when turning off the lookback epoch policy at an array size of 2<sup>28</sup>. CUB's throughput peaks at around 5.69B el/s.
 
