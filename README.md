@@ -1,7 +1,7 @@
 # Fast CUDA Radix Sort
 
 
-A re-implementation of NVIDIA's CUB onesweep Radix Sort algorithm.
+A CUDA implementation of Radix Sort based on NVIDIA CUB's onesweep.
 
 Initially motivated by [this article](https://gpuopen.com/learn/boosting_gpu_radix_sort/), this project started as a small educational endeavour to get familiar with CUDA and delve deeper into C++.
 The original goal was simply to build a radix sort for the GPU from scratch, without relying on third-party kernels.
