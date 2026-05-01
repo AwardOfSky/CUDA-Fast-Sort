@@ -167,7 +167,9 @@ Configuration used for all  experiments:
 		- 12 GB GDDR6X (stock clocks)
 	- **CPU** - 13th Gen Intel i7-13700K
 - **Software:**
-	- **CUDA** - V13.1.115
+	- **CUDA**
+		- **Version** - V13.1.115
+    	- **Build** - cuda_13.1.r13.1/compiler.37061995_0
 	- **Driver** - 580.126.09
 	- **OS** - Ubuntu 24.04.4 LTS x86_64
 	- **Kernel** - 6.17.0-22-generic
@@ -250,8 +252,8 @@ Because of CUB's input preserving requirement, sorting this many 128-bit element
 
 ### TL;DR
 
-- Strong performance gains for small key sizes (especially 16-bit).
 - Competitive performance for 32 and 64-bit keys (~2–4% gains at peak throughput).
+- Strong performance gains for small key sizes (especially 16-bit).
 - Scaling behaviour identical to CUB, with minor differences due to lookback policies.
 - Optimizations described reduce runtime (significantly in more favourable scenarios).
 - Performance gains in both _steady_ and _cold_ states.
@@ -270,6 +272,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 ### Notes (READ!):
 
+- Full validation was run on Ubuntu 24.04 LTS and Windows 11.
 - Due to heavy template instantiation, validation is disabled by default. The toggle is the single "VALIDATION_TEST" macro at the start of the main file.
 - You can use the macros at the start of [validate_sort.cuh](validate_sort.cuh) to change the set of data types to check validation for. Some other standard subsets are provided, or you can define your own.
 
