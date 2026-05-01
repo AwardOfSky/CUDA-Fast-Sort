@@ -2152,9 +2152,9 @@ Validation_Result validate_radix_type(
         uint64_t n = 1ull << i;
         int pass_ok;
         if (descending) {
-            pass_ok = benchmark<true, T>(n, warm, iter, 0, mode, true);
+            pass_ok = benchmark<true, T>(n, iter, warm, 0, mode, true);
         } else {
-            pass_ok = benchmark<false, T>(n, warm, iter, 0, mode, true);
+            pass_ok = benchmark<false, T>(n, iter, warm, 0, mode, true);
         }
         result.add(pass_ok);
 
