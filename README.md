@@ -24,7 +24,7 @@ The implementation is largely based on CUB's DeviceRadixSort:
 - Coupled lookback chain with early publication and epoch bits
 - Warp-level design
 
-Therefore, most of the implementation is, effectively, a simplified translation of these techniques/principles.
+Therefore, many of the componenets are, effectively, a simplified translation of these techniques/principles.
 
 ## Key Features
 
