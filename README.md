@@ -50,7 +50,7 @@ From a **proof-of-concept** perspective, some features were intentionally left o
 
 <sup>1</sup> Key-value support would follow a SoA approach, preserving the current key-array layout. Conceptually, this extends the scatter stage so that key moves are mirrored over the corresponding values. While this feature should be required for a production-ready sort, it is mostly independent from the optimizations already performed, so it's left for future work.
 
-<sup>2</sup> This was mainly done to test larger arrays. Unlike CUB, which preserves the input and writes to a separate output buffer, this implementation uses a standard two-buffer ping-pong scheme. This simplifies the pipeline and avoids additional buffer management, at the performance cost of potentially overwriting the input (if an odd number of passes is performed, a final extra array copy is required, as far as I understand, CUB performs no copies).
+<sup>2</sup> This was mainly done to test larger arrays. CUB provides two interfaces, one which preserves the input and writes to a separate output buffer, and another thadouble-buffering and drops the input remaining intact requirement. This implementation uses a standard two-buffer ping-pong scheme (equivalent to CUB double-buffering), simplifying the pipeline and avoiding additional buffer management at the performance cost of potentially overwriting the input in case the number of passes performance is odd.
 
 
 ## Optimizations:
@@ -247,7 +247,7 @@ This scenario consists of a preliminary experiment for sorting 128-bit arrays (a
   <img src="graphs/benchmark_128bit.png" width="55%" />
 </p>
 
-Because of CUB's input preserving requirement, sorting this many 128-bit elements is not doable, as workspace memory exceeds available VRAM, resulting in OOM. Standard deviations for CUB seem to hint towards less jitter than rsort for this scenario. Again, further scaling tests are needed in order to assert this.
+Disclaimer: Here we are not comparing with CUB's DoubleBuffer, meaning the input preserving requirement makes it so that sorting this many 128-bit elements exceeds available VRAM, resulting in OOM. Standard deviations for CUB seem to hint towards less jitter than rsort for this scenario. Again, further scaling tests are needed in order to assert this.
 
 
 ### TL;DR
