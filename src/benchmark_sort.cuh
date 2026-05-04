@@ -12,7 +12,7 @@ namespace rsort {
 
 // Reconstructs the digit histogram for the last pass and checks count of each radix
 // in the sorted array to assert if sorted output has the same counts.
-template <bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T>
+template <bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T, typename Value_T>
 static bool verify_digit_histograms_preserved(
     const Key_T* d_sorted,
     uint8_t* d_workspace,
@@ -22,7 +22,7 @@ static bool verify_digit_histograms_preserved(
 
 
     using Lookback_T = typename Lookback_Policy::T;
-    using RT = radix_tuning<Key_T>;
+    using RT = radix_tuning<Key_T, Value_T>;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
@@ -41,7 +41,7 @@ static bool verify_digit_histograms_preserved(
     CHECK_CUDA(cudaMalloc(&d_hist_chk, HIST_ELEMS * sizeof(Lookback_T)));
     CHECK_CUDA(cudaMalloc(&d_counter, sizeof(uint32_t)));
 
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T>;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T>;
     Workspace ws = Workspace::template build<Lookback_Policy>(n);
     auto workspace_view = ws.bind(d_workspace);
 
@@ -93,7 +93,7 @@ static bool verify_digit_histograms_preserved(
 
 
 // Verify histogram according to mode
-template <bool Descending, typename Key_T, typename Len_T>
+template <bool Descending, typename Key_T, typename Len_T, typename Value_T = no_value_t>
 static bool verify_hist_by_mode(
     Lookback_Modes mode,
     Array_Modes arr_mode,
@@ -104,13 +104,13 @@ static bool verify_hist_by_mode(
 
     switch (mode) {
         case Lookback_Modes::u32_epoch:
-            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T>(
+            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T>(
                 d_keys, d_workspace, n, seed, arr_mode);
         case Lookback_Modes::u32_plain:
-            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T>(
+            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T>(
                 d_keys, d_workspace, n, seed, arr_mode);
         case Lookback_Modes::u64_epoch:
-            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T>(
+            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T, Value_T>(
                 d_keys, d_workspace, n, seed, arr_mode);
     }
     return false;
@@ -138,9 +138,9 @@ int benchmark(
 
     auto launch_sorting_kernel = [&]() {
         if constexpr (Descending) {
-            onesweep_byte_sort_descending<T>(d_keys, &temp_bytes, d_workspace, n);
+            onesweep_byte_sort_descending<T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
         } else {
-            onesweep_byte_sort<T>(d_keys, &temp_bytes, d_workspace, n);
+            onesweep_byte_sort<T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
         }
     };
 
@@ -268,10 +268,10 @@ int benchmark(
     uint32_t last_seed = (uint32_t)(set_seed_radix(seed_counter - 1));
     bool hist_ok = false;
     if (Descending) {
-        hist_ok = verify_hist_by_mode<true, T>(
+        hist_ok = verify_hist_by_mode<true, T, Len_T>(
             mode, arr_mode, d_keys, d_workspace, n, last_seed);
     } else {
-        hist_ok = verify_hist_by_mode<false, T>(
+        hist_ok = verify_hist_by_mode<false, T, Len_T>(
             mode, arr_mode, d_keys, d_workspace, n, last_seed);
     }
 

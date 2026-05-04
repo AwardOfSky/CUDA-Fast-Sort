@@ -44,7 +44,7 @@ This is the same idea CUB uses. Support for descending sorting is achieved using
 
 From a **proof-of-concept** perspective, some features were intentionally left out:
 
-- No key-value pair support <sup>1</sup>
+- key-value pair support (implemented, not tested) <sup>1</sup>
 - No short circuiting (see section below)
 - Input array is replaced with sorted output <sup>2</sup>
 
@@ -292,7 +292,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 - The implementation was tested on a single GPU (mine). Cross-device results may vary.
 - The optimizations explored here are, to the best of my knowledge, not widely documented in existing GPU radix sort literature, hence this project.
 - Part of the point of this implementation was to prove the optimizations can be carried out without loss of generality and without getting in the way of other features.
-
+- Performance was mesured with release 1 of this repository. Since then, some optimizations were done, mainly to shared memory reuse and kernel geometry, that might change performance (increase in most cases).
 
 ## TODOs
 

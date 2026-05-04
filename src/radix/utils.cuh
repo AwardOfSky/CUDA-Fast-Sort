@@ -124,6 +124,9 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
+struct no_value_t {};
+
+
 // Tuning (extends constants)
 struct radix_consts {
     static constexpr uint32_t RADIX_BITS = 8;
@@ -132,19 +135,24 @@ struct radix_consts {
 };
 
 
-template<typename T>
+template<typename T, typename Value_T = no_value_t>
 struct radix_tuning : radix_consts {
+
+    static constexpr bool sorting_pairs = !std::is_same_v<Value_T, no_value_t>;
 
     static constexpr uint32_t RADIX_PASSES = sizeof(T);
 
     // These CTA_MULTIPLIER and REORDER_WARPS are for sm_86
     // In the end, these two constants should be a lookup table
     // according to the sm_xx of the card, but I only have this one
+    // 32-bit - 21/12
+    // 64-bit - 6/14 5/17 22/4 22/7(this one?) 26/6 27/6
+    // 128-bit - 
     static constexpr uint32_t CTA_MULTIPLIER =  (sizeof(T) <= 4) ? 21 : 
-                                                (sizeof(T) <= 8) ? 6  : 
+                                                (sizeof(T) <= 8) ? 7 : 
                                                 2;
-    static constexpr uint32_t REORDER_WARPS =   (sizeof(T) <= 4) ? 12 :
-                                                (sizeof(T) <= 8) ? 14 :
+    static constexpr uint32_t REORDER_WARPS =   (sizeof(T) <= 4) ? 12 : 
+                                                (sizeof(T) <= 8) ? 22 : 
                                                 20;
     
     static constexpr uint32_t REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
