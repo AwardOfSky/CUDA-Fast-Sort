@@ -1,9 +1,11 @@
 // Validation header
+// example: ./radix_gpu --validation --iterations 1 --warmup 0
 #pragma once
 
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 #include "benchmark_sort.cuh"
 
@@ -12,8 +14,9 @@
 #define VALIDATION_TEST     1
 #endif 
 
+#define PAIR_VALIDATION     1   
 
-// ===================== Validation Types =====================
+// ======================= Validation Types =======================
 #define U32_TYPE    uint32_t,
 #define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t,
 #define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t,
@@ -22,7 +25,7 @@
 
 // Change types to test HERE!!!
 #define TYPE_SET_TEST ALL_TYPES
-// ============================================================
+// ================================================================
 
 
 namespace rsort {
@@ -32,9 +35,18 @@ namespace rsort {
 
 template<typename... Ts> struct type_list {};
 
+// Types to validate (keys)
 using radix_test_types = type_list<
 #if VALIDATION_TEST
     TYPE_SET_TEST
+#endif
+>;
+
+// Validate different sized values for each key type
+using kv_types = type_list<
+    no_value_t,
+#if PAIR_VALIDATION
+    UINT_TYPES
 #endif
 >;
 
@@ -61,7 +73,7 @@ struct Validation_Result {
 
 
 // Benchmark entry point of the validation
-template<typename T>
+template<typename Key_T, typename Value_T = no_value_t>
 Validation_Result validate_radix_type(
     bool descending,
     int iter,
@@ -70,7 +82,9 @@ Validation_Result validate_radix_type(
     uint32_t vram_gb) {
 
     Validation_Result result;
-    uint32_t bit_end = radix_type_traits<T>::max_array_bits(vram_gb);
+    constexpr bool sorting_pairs = !std::is_same_v<Value_T, no_value_t>;
+    uint32_t size_el = sizeof(Key_T) + (sorting_pairs ? sizeof(Value_T) : 0); 
+    uint32_t bit_end = max_array_bits(vram_gb, size_el);
     uint32_t bit_start = bit_end - 10;
 
     for (int i = (int)bit_start; i <= (int)bit_end; ++i) {
@@ -78,19 +92,25 @@ Validation_Result validate_radix_type(
         uint64_t n = 1ull << i;
         int pass_ok;
         if (descending) {
-            pass_ok = benchmark<true, T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<true, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         } else {
-            pass_ok = benchmark<false, T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<false, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         }
         result.add(pass_ok);
 
         if (!pass_ok) {
-            std::string_view sv = type_name<T>();
-            printf("Failed test with: n = 2^%d, Order = %s, mode = %s, type = %.*s\n",
+            std::string_view sv = type_name<Key_T>();
+            std::string_view svt_temp = type_name<Value_T>();
+            std::string pair_str = "Pair: " + std::string(svt_temp);
+
+            printf(
+                "Failed test with: n = 2^%d, Order = %s, mode = %s, type = %.*s, %.*s\n",
                 i,
                 descending ? "DESC" : "ASC",
                 arr_modes_to_string(mode),
-                (int)sv.size(), sv.data()
+                (int)sv.size(), sv.data(),
+                sorting_pairs ? (int)pair_str.size() : 0,
+                sorting_pairs ? pair_str.data() : ""
             );
         }
 
@@ -101,8 +121,29 @@ Validation_Result validate_radix_type(
 }
 
 
+template<typename Key_T, typename Value_List>
+struct validate_kv_pair_list;
+
+template<typename Key_T, typename... Value_Ts>
+struct validate_kv_pair_list<Key_T, type_list<Value_Ts...>> {
+    static Validation_Result run(
+        bool descending,
+        int iter,
+        int warm,
+        Array_Modes mode,
+        uint32_t vram_gb)
+    {
+        Validation_Result total;
+        (total.merge(
+            validate_radix_type<Key_T, Value_Ts>(descending, iter, warm, mode, vram_gb)
+        ), ...);
+        return total;
+    }
+};
+
+
 // Validate accoring to list of types
-template<typename... Ts>
+template<typename... Key_Ts>
 Validation_Result validate_radix_wrap(
     bool desc,
     int iter,
@@ -111,22 +152,24 @@ Validation_Result validate_radix_wrap(
 
     Validation_Result total;
 
-    if constexpr (sizeof...(Ts) > 0) {
+    if constexpr (sizeof...(Key_Ts) > 0) {
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, 0);
-        uint64_t vram_bytes = prop.totalGlobalMem;
-        uint32_t vram_gb = vram_bytes >> 30;
+        uint32_t vram_gb = prop.totalGlobalMem >> 30;
 
         (total.merge(
-                validate_radix_type<Ts>(false, iter, warm, mode, vram_gb)
-            ), ...
-        );
+            validate_kv_pair_list<Key_Ts, kv_types>::run(
+                false, iter, warm, mode, vram_gb
+            )
+        ), ...);
         if (desc) {
             (total.merge(
-                    validate_radix_type<Ts>(true, iter, warm, mode, vram_gb)
-                ), ...
-            );
+                validate_kv_pair_list<Key_Ts, kv_types>::run(
+                    true, iter, warm, mode, vram_gb
+                )
+            ), ...);
         }
+
     }
 
     return total;

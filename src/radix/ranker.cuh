@@ -36,11 +36,11 @@ __device__ __forceinline__ uint32_t cub_match_any_8_u32(uint32_t label) {
 
 
 // This is pretty much the same kernel as CUB, just translated and simplified a bit
-template<typename Key_T>
+template<typename Key_T, typename Value_T = no_value_t>
 struct Radix_Ranker {
 
-    using RT = radix_tuning<Key_T>;
-    using U = get_unsigned_of<Key_T>;
+    using RT = radix_tuning<Key_T, Value_T>;
+    using RTraits = radix_traits<Key_T>;
     static constexpr uint32_t REORDER_WARPS = RT::REORDER_WARPS;
     static constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
     static constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
@@ -56,7 +56,7 @@ struct Radix_Ranker {
     template <bool Full_Tile, bool Descending, typename Lookback_Policy>
     static __device__ __forceinline__ void match_early_counts(
         Temp_Storage& temp_storage,
-        U (&keys)[ITEMS_PER_THREAD],
+        typename RTraits::unsigned_of (&keys)[ITEMS_PER_THREAD],
         int (&ranks)[ITEMS_PER_THREAD],
         uint32_t bit_location,
         int& exclusive_digit_prefix,
@@ -74,7 +74,7 @@ struct Radix_Ranker {
         // read radices
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
-            digits[u] = (uint8_t)extract_byte<U>(keys[u], bit_location);
+            digits[u] = (uint8_t)RTraits::extract_key(keys[u], bit_location);
         }
 
         // init offsets

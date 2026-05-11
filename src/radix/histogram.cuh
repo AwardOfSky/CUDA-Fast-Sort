@@ -112,6 +112,7 @@ __global__ void GHistogram_8bits(
     uint32_t* __restrict__ counter) {
 
     using RT = radix_tuning<Key_T>;
+    using RTraits = radix_traits<Key_T>;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
     constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
@@ -146,11 +147,11 @@ __global__ void GHistogram_8bits(
         for (int j = 0; j < GHIST_ITEMS_PER_THREAD; ++j) {
             Len_T idx = block_ind * GHIST_ITEM_PER_BLOCK + threadIdx.x * GHIST_ITEMS_PER_THREAD + (Len_T)j;
             if (idx < n) {
-                U item = twiddle_in<Descending, Key_T>(inputs[idx]);
+                U item = RTraits::twiddle_in<Descending>(inputs[idx]);
                 #pragma unroll
                 for (int p = 0; p < RADIX_PASSES; ++p) {
                     U bit = start_bits + (U)p * RADIX_BITS;
-                    U b = extract_byte<U>(item, bit);
+                    U b = RTraits::extract_key(item, bit);
                     atomicAdd(&local_counters[p][b], 1u);
                 }
             }
