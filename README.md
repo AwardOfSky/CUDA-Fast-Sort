@@ -34,14 +34,14 @@ Therefore, many of the componenets are, effectively, a simplified translation of
 - "semi"-arbitrary array sizes <sup>2</sup>
 - ascend, descend
 - limited support for 128-bit keys (only integrals for now)
-- Key-Value pair sorting <sup>3</sup>
+- Key-value pair sorting <sup>3</sup>
 
 <sup>1</sup> Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
 This is the same idea CUB uses. Support for descending sorting is achieved using the same principle: by simply inverting the bit representation during reordering.
 
 <sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurt performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even at 32 bits.
 
-<sup>3</sup> Implemented, tested, validated. Benchmarked only preliminary (about same speedup of key sorting - see Bencharmks section).
+<sup>3</sup> Implemented, tested, validated (all 2200 tests). Benchmarked only preliminary (about same speedup obtained for key sorting - see Bencharmks section).
 
 ### Assumptions and missing features (different from CUB):
 
@@ -255,12 +255,13 @@ Disclaimer: Here we are not comparing with CUB's DoubleBuffer, meaning the input
 
 ### KV Pair - preliminary results (TODO)
 
-rsort vs CUB:
+**Rsort vs CUB:**
 
-32/32 bits - 11.340 ms (+- 3.147 us) | 11.776 ms (+- 10.546 us)
-64/32 bits - 33.606 ms (+- 28.531 us) | 36.104 ms (+- 48.020 us)
-32/64 bits - 16.756 ms (+- 6.915 us) | 17.898 ms (+- 17.493 us)
-64/64 bits - 44.109 ms (+- 20.177 us) | 49.666 ms (+- 50.112 us)
+- 32/32 bits - 11.340 ms (+- 3.147 us) | 11.776 ms (+- 10.546 us)
+- 64/32 bits - 33.606 ms (+- 28.531 us) | 36.104 ms (+- 48.020 us)
+- 32/64 bits - 16.756 ms (+- 6.915 us) | 17.898 ms (+- 17.493 us)
+- 64/64 bits - 44.109 ms (+- 20.177 us) | 49.666 ms (+- 50.112 us)
+
 
 ### TL;DR
 
