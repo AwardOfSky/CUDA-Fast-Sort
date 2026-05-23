@@ -131,21 +131,22 @@ void onesweep_byte(
 
     using RT = radix_tuning<Key_T, Value_T>;
     using RTraits = radix_traits<Key_T>;
-    using Tuning_T = typename RT::Tuning_T;
-    constexpr Tuning_T SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
-    constexpr Tuning_T LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
-    constexpr Tuning_T ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
-    constexpr Tuning_T ITEMS_PER_WARP = RT::REORDER_ITEMS_PER_WARP;
-    constexpr Tuning_T RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
-    constexpr Tuning_T RADIX_BITS = RT::RADIX_BITS;
+    constexpr uint32_t SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+    constexpr uint32_t LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
+    constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    constexpr uint32_t ITEMS_PER_WARP = RT::REORDER_ITEMS_PER_WARP;
+    constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
+    constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
+    //constexpr bool SORTING_PAIRS = RT::sorting_pairs;
     
+
     static_assert(RADIX_BIN_SIZE == 256, "CUB-like kernel expects 8-bit radix.");
 
 
-    __shared__ typename Scatter::SMem smem;
 #if USE_PSUM_SHARED
     __shared__ Lookback_T p_sum[RADIX_BIN_SIZE];
 #endif
+    __shared__ typename Scatter::SMem smem;
 
     uint32_t block_index = (uint32_t)blockIdx.x;
     const int bin_owner = (int)threadIdx.x < (int)RADIX_BIN_SIZE;
@@ -161,7 +162,7 @@ void onesweep_byte(
     int ranks[ITEMS_PER_THREAD];
 
     int warp = (int)threadIdx.x / WARP_SIZE;
-    int lane = lane_id_i32();
+    int lane = (int)lane_id_u32();
 
     int exclusive_digit_prefix = 0;
     if (full_block) {
@@ -185,13 +186,16 @@ void onesweep_byte(
         );
 
     } else {
+        //const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
         const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
         #pragma unroll
         for (int i = 0; i < ITEMS_PER_THREAD; ++i) {
             //uint32_t idx = warp_base + lane + i * WARP_SIZE;
             uint64_t idx = warp_base64 + (uint64_t)lane + (uint64_t)i * WARP_SIZE;
             
-
+            // The filler key must map to the last radix bin in the current order.
+            //keys[i] = twiddle_in<Descending, Key_T>(
+            //    (idx < n) ? in_keys[idx] : tail_filler_key<Descending, Key_T>());
             keys[i] = (idx < (uint64_t)n)
                 ? RTraits::twiddle_in<Descending>(in_keys[(Len_T)idx])
                 : RTraits::tail_filler_bits();
@@ -211,7 +215,7 @@ void onesweep_byte(
         );
 
     }
-    //__syncthreads(); // taken out to not mess with the next __sync's performance
+    //__syncthreads(); // taken out to not mess with the next 2 __sync's performance
 
     Lookback_T p = 0;
     if (bin_owner) {
@@ -246,8 +250,8 @@ void onesweep_byte(
     __syncthreads();
 
 
-    // scattering
     size_t src_lane_base = (size_t)warp * ITEMS_PER_WARP + (size_t)lane;
+    // scattering
     if (full_block) {
         Scatter::template scatter_staged<true, Descending, Len_T>(
             &smem,
@@ -257,8 +261,7 @@ void onesweep_byte(
             actual_tile_items,
             bit_location,
             block_base,
-            src_lane_base,
-            in_vals, out_vals
+            in_vals, out_vals, src_lane_base
         );
     } else {
         Scatter::template scatter_staged<false, Descending, Len_T>(
@@ -269,10 +272,10 @@ void onesweep_byte(
             actual_tile_items,
             bit_location,
             block_base,
-            src_lane_base,
-            in_vals, out_vals
+            in_vals, out_vals, src_lane_base
         );
     }
+    //Staging::scatter_staged<false, Descending, Lookback_T, Key_T, Len_T, U, Value_T>(
 }
 
 
@@ -541,13 +544,12 @@ static inline void onesweep_byte_sort_wrap(
     size_t* temp_bytes,
     uint8_t* d_workspace,
     Len_T n,
-    Value_T* d_inout_vals = nullptr,
-    cudaStream_t capture_stream = nullptr
+    Value_T* d_inout_vals = nullptr
 ) {
 
-//#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
-    //if (d_workspace != nullptr) {
-    if ((d_workspace != nullptr) && USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT) {
+    cudaStream_t capture_stream = nullptr;
+#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
+    if (d_workspace != nullptr) {
         cudaGraph_t graph = nullptr;
         cudaGraphExec_t exec = nullptr;
         cudaStream_t stream = 0;
@@ -567,7 +569,7 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamDestroy(capture_stream);
         return;
     }
-//#endif
+#endif
     looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
         d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
     );
@@ -583,8 +585,7 @@ static inline void onesweep_byte_sort(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n,
-    cudaStream_t capture_stream = nullptr
+    Len_T n
 ) {
     
     onesweep_byte_sort_wrap<false, Key_T, size_t, no_value_t>(
@@ -592,8 +593,7 @@ static inline void onesweep_byte_sort(
         temp_bytes,
         d_workspace,
         n,
-        nullptr,
-        capture_stream
+        nullptr
     );
 }
 
@@ -603,8 +603,7 @@ static inline void onesweep_byte_sort_descending(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n,
-    cudaStream_t capture_stream = nullptr
+    Len_T n
 ) {
     
     onesweep_byte_sort_wrap<true, Key_T, size_t, no_value_t>(
@@ -612,8 +611,7 @@ static inline void onesweep_byte_sort_descending(
         temp_bytes,
         d_workspace,
         n,
-        nullptr,
-        capture_stream
+        nullptr
     );
 }
 
@@ -624,8 +622,7 @@ static inline void onesweep_byte_sort_pairs(
     Value_T* d_inout_values,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n,
-    cudaStream_t capture_stream = nullptr
+    Len_T n
 ) {
     
     onesweep_byte_sort_wrap<false, Key_T, size_t, Value_T>(
@@ -633,8 +630,7 @@ static inline void onesweep_byte_sort_pairs(
         temp_bytes,
         d_workspace,
         n,
-        d_inout_values,
-        capture_stream
+        d_inout_values
     );
 }
 
@@ -645,8 +641,7 @@ static inline void onesweep_byte_sort_pairs_descending(
     Value_T* d_inout_values,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n,
-    cudaStream_t capture_stream = nullptr
+    Len_T n
 ) {
     
     onesweep_byte_sort_wrap<true, Key_T, size_t, Value_T>(
@@ -654,8 +649,7 @@ static inline void onesweep_byte_sort_pairs_descending(
         temp_bytes, 
         d_workspace,
         n,
-        d_inout_values,
-        capture_stream
+        d_inout_values
     );
 }
 

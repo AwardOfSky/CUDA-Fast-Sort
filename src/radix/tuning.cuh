@@ -19,9 +19,9 @@
 
 namespace rsort {
 
-// Staging modes, policy and scatter logic could be in scatter.cuh, but makes more sense
-// to define it here at the base because it also influences kernel geometry and tuning.
-// This header defines modes and tuning, including staging. scatter.cuh defines how 
+// Staging modes, policy and logic could be in staging.cuh, but makes more sense to
+// define it here at the base because it also influences kernel geometry and tuning.
+// This header defines modes and tuning, including staging. staging.cuh defines how 
 // those staging modes behave, along with scattering.
 enum class staging_modes : uint32_t {
     automatic   = 0,
@@ -31,19 +31,17 @@ enum class staging_modes : uint32_t {
 };
 
 
-struct staging_pair {
-    staging_modes keys;
-    staging_modes vals;
-};
-
 struct no_value_t {};
 
 struct radix_consts {
-    using Tuning_T = uint32_t; // uint32_t
+    static constexpr uint32_t RADIX_BITS = 8;
+    static constexpr uint32_t RADIX_BIN_SIZE = 1u << RADIX_BITS;
+    static constexpr uint32_t RADIX_MASK = RADIX_BIN_SIZE - 1u;
+};
 
-    static constexpr Tuning_T RADIX_BITS = 8;
-    static constexpr Tuning_T RADIX_BIN_SIZE = 1u << RADIX_BITS;
-    static constexpr Tuning_T RADIX_MASK = RADIX_BIN_SIZE - 1u;
+struct staging_pair {
+    staging_modes keys;
+    staging_modes vals;
 };
 
 
@@ -82,12 +80,12 @@ struct radix_tuning : radix_consts {
                 ? staging_modes::direct
                 : staging_modes::indices;
 
-        constexpr Tuning_T key_size =
+        constexpr uint32_t key_size =
             (default_keys == staging_modes::direct)
                 ? sizeof(Key_T)
                 : sizeof(uint32_t);
 
-        constexpr Tuning_T size_budget = 16;
+        constexpr uint32_t size_budget = 16;
         constexpr staging_modes default_vals =
             ((key_size + sizeof(Value_T)) <= size_budget)
                 ? staging_modes::direct
@@ -104,6 +102,7 @@ struct radix_tuning : radix_consts {
                 ? STAGE_VALS_OVERRIDE
                 : default_vals;
 
+                
         // sanity checks
         static_assert(
                 keys_staging != staging_modes::disabled,
@@ -133,29 +132,30 @@ struct radix_tuning : radix_consts {
     
     // 16/16: 13/22 13/24 
     // 32/16: 11/21 11/22 (this one) 10/24
-    // 32/32: 8/16 7/19 (this one) 6/23
+    // 32/32: 12/11(this one)   15/9    15/12 10/14     8/16 7/19 (this one) 6/23
     // 64/32: 4/20
     // 32/64: 4/20
     // 64/64: 3/19
-    static constexpr Tuning_T CTA_MULTIPLIER_NO_PAIR =  (sizeof(Key_T) <= 4) ? 21 : // 21
+    static constexpr uint32_t CTA_MULTIPLIER_NO_PAIR =  (sizeof(Key_T) <= 4) ? 21 : // 21
                                                         (sizeof(Key_T) <= 8) ? 7  : // 7
                                                         2; // TODOs: optimize this
-    static constexpr Tuning_T REORDER_WARPS_NO_PAIR =   (sizeof(Key_T) <= 4) ? 12 : // 12 
+    static constexpr uint32_t REORDER_WARPS_NO_PAIR =   (sizeof(Key_T) <= 4) ? 12 : // 12 
                                                         (sizeof(Key_T) <= 8) ? 22 : // 22
                                                         20;
     
 
-    static constexpr Tuning_T size_el_key = 
+    static constexpr uint32_t size_el_key = 
         (staging.keys == staging_modes::direct) ? sizeof(Key_T) : sizeof(uint32_t);
-    static constexpr Tuning_T size_el_val = 
+    static constexpr uint32_t size_el_val = 
         sorting_pairs ? 
             ((staging.vals == staging_modes::direct) ?
                 sizeof(Value_T) :
                 sizeof(uint32_t)) :
             0;
-    static constexpr Tuning_T size_el = size_el_key + size_el_val;
+    static constexpr uint32_t size_el = size_el_key + size_el_val;
 
-    static constexpr Tuning_T get_cta_geometry() {
+    // 32/32 - 12/14
+    static constexpr uint32_t get_cta_geometry() {
         if constexpr (!sorting_pairs) {
             return CTA_MULTIPLIER_NO_PAIR;
         }
@@ -169,7 +169,7 @@ struct radix_tuning : radix_consts {
     }
 
 
-    static constexpr Tuning_T get_warp_geometry() {
+    static constexpr uint32_t get_warp_geometry() {
         if constexpr (!sorting_pairs) {
             return REORDER_WARPS_NO_PAIR;
         }
@@ -183,15 +183,15 @@ struct radix_tuning : radix_consts {
     }
 
 
-    static constexpr Tuning_T CTA_MULTIPLIER    = get_cta_geometry();
-    static constexpr Tuning_T REORDER_WARPS     = get_warp_geometry();
+    static constexpr uint32_t CTA_MULTIPLIER    = get_cta_geometry();
+    static constexpr uint32_t REORDER_WARPS     = get_warp_geometry();
     
-    static constexpr Tuning_T RADIX_PASSES = sizeof(Key_T);
-    static constexpr Tuning_T REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
-    static constexpr Tuning_T SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items / CTA
-    static constexpr Tuning_T REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
-    static constexpr Tuning_T REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
-    static constexpr Tuning_T REORDER_LOGICAL_BLOCK_SIZE = SORT_BLOCK_SIZE;
+    static constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
+    static constexpr uint32_t REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
+    static constexpr uint32_t SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items / CTA
+    static constexpr uint32_t REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
+    static constexpr uint32_t REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
+    static constexpr uint32_t REORDER_LOGICAL_BLOCK_SIZE = SORT_BLOCK_SIZE;
 
     static_assert(
         (SORT_BLOCK_SIZE % REORDER_THREADS) == 0,
@@ -201,6 +201,7 @@ struct radix_tuning : radix_consts {
     using Stage_Ind_T = std::conditional_t<
         (REORDER_LOGICAL_BLOCK_SIZE <= 0xFFFFu) && !FORCE_32BIT_STAGING, uint16_t, uint32_t
     >;
+    //using Stage_Ind_T = uint32_t;
 };
 
 

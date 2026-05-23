@@ -66,8 +66,8 @@ __device__ __forceinline__ uint32_t block_exclusive_scan_256(
     constexpr uint32_t SCAN256_WARPS = histogram_tuning::SCAN256_WARPS;
 
     int tid = (int)threadIdx.x;
-    int warp = tid / WARP_SIZE;
-    int lane = lane_id_i32();
+    const int warp = tid / WARP_SIZE;
+    const int lane = (int)lane_id_u32();
     
     bool active = tid < (int)radix_consts::RADIX_BIN_SIZE;
 

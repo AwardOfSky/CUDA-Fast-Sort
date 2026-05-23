@@ -92,7 +92,7 @@ int benchmark_cub(
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
     CHECK_CUDA(cudaMalloc(&d_out, sizeof(T) * n));
     if constexpr (SORTING_PAIRS) {
-        size_t vals_bytes = align_up_power<sizeof(uint32_t)>(size_t(sizeof(Value_T)) * size_t(n));
+        size_t vals_bytes = align_up_power<4>(size_t(sizeof(Value_T)) * size_t(n));
         CHECK_CUDA(cudaMalloc(&d_vals, vals_bytes));
         CHECK_CUDA(cudaMalloc(&d_vals_out, vals_bytes));
     }
@@ -111,7 +111,7 @@ int benchmark_cub(
         if constexpr (SORTING_PAIRS) {
             rsort::init_keys<uint32_t, Len_T><<<div_round_up(n, (Len_T)256), 256>>>(
                 (uint32_t*)d_vals,
-                align_up_power<sizeof(uint32_t)>(size_t(sizeof(Value_T)) * size_t(n)) / sizeof(uint32_t),
+                align_up_power<4>(size_t(sizeof(Value_T)) * size_t(n)) / sizeof(uint32_t),
                 seed,
                 arr_mode
             );
