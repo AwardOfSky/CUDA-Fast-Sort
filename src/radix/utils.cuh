@@ -80,14 +80,14 @@ __device__ __forceinline__ int active_thread_limit(uint32_t x) {
 }
 
 
-__device__ __forceinline__ int lane_id_u32() {
+__device__ __forceinline__ uint32_t lane_id_i32() {
     int x;
     asm volatile("mov.u32 %0, %%laneid;" : "=r"(x));
     return x;
 }
 
 
-__device__ __forceinline__ int lane_mask_le_u32() {
+__device__ __forceinline__ uint32_t lane_mask_le_i32() {
     int x;
     asm volatile("mov.u32 %0, %%lanemask_le;" : "=r"(x));
     return x;
@@ -139,6 +139,29 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
+template <typename T>
+inline uint32_t ceil_log2_size(T n) {
+    static_assert(
+        std::is_integral_v<T> && !std::is_same_v<T, bool>,
+        "[ceil_log2_size]: N must be an integer."
+    );
+
+    if (n <= 1) {
+        return 0;
+    }
+
+    int r = 0;
+    T p = 1;
+
+    while (p < n) {
+        p <<= 1;
+        ++r;
+    }
+
+    return r;
+}
+
+
 // quick and dirty array size estimation
 uint32_t __host__ max_array_bits(const uint32_t vram_gb, const uint32_t sizeof_kv) {
     if (vram_gb == 0) {
@@ -152,16 +175,12 @@ uint32_t __host__ max_array_bits(const uint32_t vram_gb, const uint32_t sizeof_k
         ++gib_bits;
     }
 
-    uint32_t elem_adjust =
-        sizeof_kv == 16 ? -1 :
-        sizeof_kv == 8 ? 0 :
-        sizeof_kv == 4 ? 1 :
-        sizeof_kv == 2 ? 2 :
-        sizeof_kv == 1 ? 3 :
-        0;
-
+    int32_t elem_adjust = 3 - ceil_log2_size(sizeof_kv);
     uint32_t base_bits_u64 = 26; // 2 arrays of 64-bit elements fit in 1 GiB
-    return base_bits_u64 + elem_adjust + gib_bits;
+
+    int32_t bits = base_bits_u64 + elem_adjust + gib_bits;
+    
+    return uint32_t(bits >= 0 ? bits : 0);
 }
 
 
@@ -285,17 +304,23 @@ int set_seed_radix(int index) {
 
 
 // ---- other helpers ----
-template<typename T>
+template<typename T, bool ddof = false>
 double stdev(const T* arr, double avg, size_t n) {
     if (n == 0) {
         return 0.0;
     }
+
     double acc = 0.0;
     for (size_t i = 0; i < n; ++i) {
         double temp = (double)arr[i] - avg;
         acc += temp * temp;
     }
-    return std::sqrt(acc / (double)n);
+
+    if constexpr (ddof) {
+        return (n > 1) ? std::sqrt(acc / (double)(n - 1)) : 0.0;
+    } else {
+        return std::sqrt(acc / (double)n);
+    }
 }
 
 

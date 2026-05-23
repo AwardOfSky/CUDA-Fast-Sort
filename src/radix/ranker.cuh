@@ -36,10 +36,14 @@ __device__ __forceinline__ uint32_t cub_match_any_8_u32(uint32_t label) {
 
 
 // This is pretty much the same kernel as CUB, just translated and simplified a bit
-template<typename Key_T, typename Value_T = no_value_t>
+template<
+    typename Key_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
 struct Radix_Ranker {
 
-    using RT = radix_tuning<Key_T, Value_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
     using RTraits = radix_traits<Key_T>;
     static constexpr uint32_t REORDER_WARPS = RT::REORDER_WARPS;
     static constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
@@ -66,9 +70,9 @@ struct Radix_Ranker {
         uint32_t invalid_items,
         typename Lookback_Policy::T lookback_epoch_bits) {
 
-        const int warp = threadIdx.x / WARP_SIZE;
-        const int lane = lane_id_u32();
-        const int bin_owner = threadIdx.x < RADIX_BIN_SIZE;
+        int warp = (int)threadIdx.x / WARP_SIZE;
+        int lane = lane_id_i32();
+        int bin_owner = (int)threadIdx.x < RADIX_BIN_SIZE;
         uint8_t digits[ITEMS_PER_THREAD];
 
         // read radices
@@ -90,12 +94,12 @@ struct Radix_Ranker {
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             atomicAdd(&warp_offsets[(uint32_t)digits[u]], 1);
         }
+        __syncthreads();
 
         // Block-wide upsweep
-        __syncthreads();
         int bins = 0;
         if (bin_owner) {
-            const int bin = (int)threadIdx.x;
+            int bin = (int)threadIdx.x;
             int* warp_bin_ptr = &temp_storage.warp_offsets[0][bin];
             int* warp_bin_it = warp_bin_ptr;
 
@@ -145,13 +149,13 @@ struct Radix_Ranker {
 
         // Per-item rank within the warp/bin
         warp_offsets = &temp_storage.warp_offsets[warp][0];
-        const int lane_mask_le = (int)lane_mask_le_u32();
+        const int lane_mask_le = lane_mask_le_i32();
  
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             uint32_t key_bin = (uint32_t)digits[u];
 
-            int bin_mask = (int)cub_match_any_8_u32(key_bin);
+            int bin_mask = cub_match_any_8_u32(key_bin);
 
             int leader = (WARP_SIZE - 1) - __clz((unsigned)bin_mask);
             int warp_offset = 0;

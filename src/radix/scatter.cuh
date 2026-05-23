@@ -15,21 +15,22 @@
 
 
 namespace rsort {
-
+    
 template<
     typename Key_T,
     typename U,
     typename Lookback_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
 struct Scatter {
 
 
-    using RT = radix_tuning<Key_T, Value_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
     using RTraits = radix_traits<Key_T>;
-    using Ranker = Radix_Ranker<Key_T, Value_T>;
-    using Stage_Ind_T = RT::Stage_Ind_T;
+    using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
+    using Stage_Ind_T = typename RT::Stage_Ind_T;
 
     static constexpr uint32_t STAGE_PAIRS = RT::sorting_pairs * sizeof(Lookback_T) / sizeof(U);
     static constexpr uint32_t LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
@@ -68,17 +69,15 @@ struct Scatter {
 
 
 #if UNIONIZE_SMEM
-        union {
+        union
+#endif
+        {
             typename Ranker::Temp_Storage rank_temp;
             struct {
                 conditional_arr<U, Stage_Ind_T, LOGICAL_BLOCK_SIZE, keys_staging> staged_keys;
                 conditional_arr<Value_T, Stage_Ind_T, LOGICAL_BLOCK_SIZE, vals_staging> staged_vals;
             };
         };
-#else
-        typename Ranker::Temp_Storage rank_temp;
-        U staged[LOGICAL_BLOCK_SIZE];
-#endif
         uint16_t bin_count[RADIX_BIN_SIZE];     
         Lookback_T bin_offset[RADIX_BIN_SIZE];
 
@@ -153,7 +152,6 @@ struct Scatter {
     template<
         bool Full_Block,
         bool Descending,
-        typename Len_T,
         typename SMem_T
     >
     static __device__ __forceinline__ void scatter_staged(
@@ -167,9 +165,9 @@ struct Scatter {
         uint32_t actual_tile_items,
         uint32_t bit_location,
         Len_T block_base,
+        size_t src_lane_base = 0,
         Value_T* __restrict__ in_vals = nullptr,
-        Value_T* __restrict__ out_vals = nullptr,
-        const size_t src_lane_base = 0
+        Value_T* __restrict__ out_vals = nullptr
     ) {
 
 
@@ -177,6 +175,7 @@ struct Scatter {
         // init staging
         #pragma unroll
         for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
+            //smem->stage_init(keys, ranks, k, block_base, actual_tile_items, in_vals);
             smem->stage_init(keys, ranks, k, block_base, actual_tile_items, src_lane_base, in_vals);
 
         }
@@ -252,9 +251,9 @@ Then the staging struct becomes:
 
 
 and we access the elements with smem->staged.keys()[i] and smem->staged.vals()[i]
-However, this was shown to reduce execution times slghtly even 
+However, this was shown to reduce performance slghtly even 
 when caching the pointer before "U* __restrict__ staged_keys = smem->staged.keys();",
-so it was reverted. Not a zero cost abstraction!
-Other than that, Manually specializing 9 templates (3*3 staging modes) 
-does not seem like a good practise at all
+so it was reverted (Not a zero cost abstraction)
+Other than that, Manually specializing templates for all staging modes
+does not seem like good practise.
 */

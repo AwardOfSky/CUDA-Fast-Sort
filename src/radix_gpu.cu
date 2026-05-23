@@ -19,12 +19,13 @@
 #include "benchmark_sort.cuh"
 #include "bench_parser.h"
 
-// Template heavy, only enable if you want to run validation
+// Validation is template HEAVY! Only enable if you want to run validation.
 #define VALIDATION_TEST     0
 #include "validate_sort.cuh"
 
 
 int main(int argc, char** argv) {
+
     // bench_parser.h for default values
     parse::Global_Config conf{};
 
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
             conf.iterations,
             conf.warmups,
             conf.warm_ms,
-            rsort::Array_Modes::random
+            rsort::Array_Modes::random // blank_bytes
         );
     // Validation example
     } else {

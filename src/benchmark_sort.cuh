@@ -9,6 +9,9 @@
 #include "radix_kernel.cuh"
 
 
+#define BENCH_DEBUG     0
+
+
 namespace rsort {
 
 // Reconstructs the digit histogram for the last pass and checks count of each radix
@@ -18,7 +21,8 @@ template <
     typename Lookback_Policy,
     typename Key_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
 static bool verify_digit_histograms_preserved(
     const Key_T* d_sorted,
@@ -49,7 +53,7 @@ static bool verify_digit_histograms_preserved(
     CHECK_CUDA(cudaMalloc(&d_hist_chk, HIST_ELEMS * sizeof(Lookback_T)));
     CHECK_CUDA(cudaMalloc(&d_counter, sizeof(uint32_t)));
 
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T>;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
     Workspace ws = Workspace::template build<Lookback_Policy>(n);
     auto workspace_view = ws.bind(d_workspace);
 
@@ -101,6 +105,7 @@ static bool verify_digit_histograms_preserved(
 }
 
 
+// TODOs: rewrite this
 // Verify histogram according to mode
 template <bool Descending, typename Key_T, typename Len_T, typename Value_T = no_value_t>
 static bool verify_hist_by_mode(
@@ -111,15 +116,20 @@ static bool verify_hist_by_mode(
     Len_T n,
     uint32_t seed)  {
 
+    if (n <= LOW_N) {
+        return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
+            d_keys, d_workspace, n, seed, arr_mode);
+    }
+
     switch (mode) {
         case Lookback_Modes::u32_epoch:
-            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T>(
+            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_keys, d_workspace, n, seed, arr_mode);
         case Lookback_Modes::u32_plain:
-            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T>(
+            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_keys, d_workspace, n, seed, arr_mode);
         case Lookback_Modes::u64_epoch:
-            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T, Value_T>(
+            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_keys, d_workspace, n, seed, arr_mode);
     }
     return false;
@@ -127,7 +137,12 @@ static bool verify_hist_by_mode(
 
 
 // Benchmarking function (entry point of the sort)
-template<bool Descending, typename Key_T, typename Len_T, typename Value_T = no_value_t>
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t
+>
 int benchmark(
     Len_T n,
     uint32_t iters,
@@ -137,9 +152,24 @@ int benchmark(
     bool validation = false
 ) {
 
-
-    using RT = radix_tuning<Key_T, Value_T>;
-    static constexpr bool SORTING_PAIRS = RT::sorting_pairs;
+    using ull_t = long long unsigned int;
+    uint32_t SORT_BLOCK_SIZE;
+    uint32_t REORDER_THREADS;
+    uint32_t REORDER_ITEMS_PER_THREAD;
+    using RT_default = radix_tuning<Key_T, Value_T>;
+    if (n <= LOW_N) {
+        using RT = radix_tuning<Key_T, Value_T, true>;
+        SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+        REORDER_THREADS = RT::REORDER_THREADS;
+        REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    } else {
+        using RT = radix_tuning<Key_T, Value_T, false>;
+        SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+        REORDER_THREADS = RT::REORDER_THREADS;
+        REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    }
+    static constexpr uint32_t RADIX_BITS = RT_default::RADIX_BITS;
+    static constexpr bool SORTING_PAIRS = RT_default::sorting_pairs;
 
 
     // initialization
@@ -167,13 +197,22 @@ int benchmark(
 
     };
 
-
+    
     // do not time memory allocations
-    CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));
+    CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
     if constexpr (SORTING_PAIRS) {
-        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<4>(sizeof(Value_T) * n))); // 
+        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n))); // 
     }
     launch_sorting_kernel();
+    if (BENCH_DEBUG) {
+        printf(
+            "n: %llu, key size: %llu, val size: %llu, temp_bytes requested: %llu\n",
+            (ull_t)n,
+            (ull_t)sizeof(Key_T) * n,
+            (ull_t)(SORTING_PAIRS ? align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) : 0), 
+            (ull_t)temp_bytes
+        );
+    }
     CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
     CHECK_CUDA(cudaGetLastError());
 
@@ -188,7 +227,7 @@ int benchmark(
         if constexpr (SORTING_PAIRS) {
             init_keys<uint32_t, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
                 (uint32_t *)d_vals,
-                align_up_power<4>(sizeof(Value_T) * n) / sizeof(uint32_t),
+                align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) / sizeof(uint32_t),
                 seed,
                 arr_mode
             );
@@ -257,12 +296,12 @@ int benchmark(
             "Pairs\t=\t%.*s\n",
 
             prop.name,
-            RT::RADIX_BITS,
-            (long long unsigned int)n,
+            RADIX_BITS,
+            (ull_t)n,
             (int)sv_temp.size(), sv_temp.data(),
-            (uint32_t)div_round_up<Len_T>(n, RT::SORT_BLOCK_SIZE),
-            RT::REORDER_THREADS,
-            RT::REORDER_ITEMS_PER_THREAD,
+            (uint32_t)div_round_up<Len_T>(n, SORT_BLOCK_SIZE),
+            REORDER_THREADS,
+            REORDER_ITEMS_PER_THREAD,
             (double)temp_bytes / (1024. * 1024.),
             ms_avg, us_std,
             iters, warmups_done,
@@ -307,6 +346,7 @@ int benchmark(
     // check histograms 
     uint32_t last_seed = (uint32_t)(set_seed_radix(seed_counter - 1));
     bool hist_ok = false;
+
     if (Descending) {
         hist_ok = verify_hist_by_mode<true, Key_T, Len_T, Value_T>(
             mode, arr_mode, d_keys, d_workspace, n, last_seed);
@@ -321,12 +361,12 @@ int benchmark(
     } else {
         std::string pair_str = "Pair: " + std::string(svt_temp) + " ,";
         printf(
-            "Sorting %llu els"
+            "Sorting %llu els "
             "of type %.*s, %.*s (%.3f MB)"
             "(%s), %s array - %.3f ms"
             "(%d avg + %d wm)... %s\n",
 
-            (long long unsigned int)n,
+            (ull_t)n,
             (int)sv_temp.size(), sv_temp.data(),
             SORTING_PAIRS ? (int)pair_str.size() : 0,
             SORTING_PAIRS ? pair_str.data() : "",

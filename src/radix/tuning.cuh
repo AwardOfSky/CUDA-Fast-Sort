@@ -19,9 +19,9 @@
 
 namespace rsort {
 
-// Staging modes, policy and logic could be in staging.cuh, but makes more sense to
-// define it here at the base because it also influences kernel geometry and tuning.
-// This header defines modes and tuning, including staging. staging.cuh defines how 
+// Staging modes, policy and scatter logic could be in scatter.cuh, but makes more sense
+// to define it here at the base because it also influences kernel geometry and tuning.
+// This header defines modes and tuning, including staging. scatter.cuh defines how 
 // those staging modes behave, along with scattering.
 enum class staging_modes : uint32_t {
     automatic   = 0,
@@ -31,24 +31,27 @@ enum class staging_modes : uint32_t {
 };
 
 
-struct no_value_t {};
-
-struct radix_consts {
-    static constexpr uint32_t RADIX_BITS = 8;
-    static constexpr uint32_t RADIX_BIN_SIZE = 1u << RADIX_BITS;
-    static constexpr uint32_t RADIX_MASK = RADIX_BIN_SIZE - 1u;
-};
-
 struct staging_pair {
     staging_modes keys;
     staging_modes vals;
+};
+
+struct no_value_t {};
+
+struct radix_consts {
+    using Tuning_T = uint32_t; // uint32_t
+
+    static constexpr Tuning_T RADIX_BITS = 8;
+    static constexpr Tuning_T RADIX_BIN_SIZE = 1u << RADIX_BITS;
+    static constexpr Tuning_T RADIX_MASK = RADIX_BIN_SIZE - 1u;
 };
 
 
 // Tuning (extends constants)
 template<
     typename Key_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
 struct radix_tuning : radix_consts {
 
@@ -80,12 +83,12 @@ struct radix_tuning : radix_consts {
                 ? staging_modes::direct
                 : staging_modes::indices;
 
-        constexpr uint32_t key_size =
+        constexpr Tuning_T key_size =
             (default_keys == staging_modes::direct)
                 ? sizeof(Key_T)
                 : sizeof(uint32_t);
 
-        constexpr uint32_t size_budget = 16;
+        constexpr Tuning_T size_budget = 16;
         constexpr staging_modes default_vals =
             ((key_size + sizeof(Value_T)) <= size_budget)
                 ? staging_modes::direct
@@ -102,7 +105,6 @@ struct radix_tuning : radix_consts {
                 ? STAGE_VALS_OVERRIDE
                 : default_vals;
 
-                
         // sanity checks
         static_assert(
                 keys_staging != staging_modes::disabled,
@@ -121,41 +123,56 @@ struct radix_tuning : radix_consts {
 
     static constexpr staging_pair staging = staging_policy();
 
+
+    // Default geometry table
+    //
     // These CTA_MULTIPLIER and REORDER_WARPS are for sm_86
     // In the end, these two constants should be a lookup table
     // according to the sm_xx of the card, but I only have this one
     // 32-bit - 21/12
-    // 64-bit - 6/14 5/17 22/4 7/22(this one?) 26/6 27/6
-    // 128-bit - optimize!
+    // 64-bit - 6/14 5/17 4/22 7/22(this one?) 6/26 6/27
+    // 128-bit - 2/19, 3/25
 
-    // key-value pairs
-    
-    // 16/16: 13/22 13/24 
-    // 32/16: 11/21 11/22 (this one) 10/24
-    // 32/32: 12/11(this one)   15/9    15/12 10/14     8/16 7/19 (this one) 6/23
-    // 64/32: 4/20
-    // 32/64: 4/20
-    // 64/64: 3/19
-    static constexpr uint32_t CTA_MULTIPLIER_NO_PAIR =  (sizeof(Key_T) <= 4) ? 21 : // 21
-                                                        (sizeof(Key_T) <= 8) ? 7  : // 7
-                                                        2; // TODOs: optimize this
-    static constexpr uint32_t REORDER_WARPS_NO_PAIR =   (sizeof(Key_T) <= 4) ? 12 : // 12 
-                                                        (sizeof(Key_T) <= 8) ? 22 : // 22
-                                                        20;
+    static constexpr Tuning_T get_default_cta_geometry() {
+        //return  (sizeof(Key_T) <= 4) ? 21 : // 21
+        return  (sizeof(Key_T) <= 4) ? (Short_Mode ? 21 : 21) : // 21
+                (sizeof(Key_T) <= 8) ? (Short_Mode ? 6  : 7 ) : // 7 (6)
+                (Short_Mode ? 5 : 2); // TODOs: optimize this (128 bits)
+    }
+
+
+    static constexpr Tuning_T get_default_warp_geometry() {
+        //return  (sizeof(Key_T) <= 4) ? 12 : // 12 
+        return  (sizeof(Key_T) <= 4) ? (Short_Mode ? 12 : 12) : // 12 
+                (sizeof(Key_T) <= 8) ? (Short_Mode ? 12 : 22) : // 22 (12)
+                (Short_Mode ? 15 : 19);
+    }
+
+    static constexpr Tuning_T CTA_MULTIPLIER_NO_PAIR = get_default_cta_geometry();
+    static constexpr Tuning_T REORDER_WARPS_NO_PAIR = get_default_warp_geometry();
     
 
-    static constexpr uint32_t size_el_key = 
+    static constexpr Tuning_T size_el_key = 
         (staging.keys == staging_modes::direct) ? sizeof(Key_T) : sizeof(uint32_t);
-    static constexpr uint32_t size_el_val = 
+    static constexpr Tuning_T size_el_val = 
         sorting_pairs ? 
             ((staging.vals == staging_modes::direct) ?
                 sizeof(Value_T) :
                 sizeof(uint32_t)) :
             0;
-    static constexpr uint32_t size_el = size_el_key + size_el_val;
+    static constexpr Tuning_T size_el = size_el_key + size_el_val;
 
-    // 32/32 - 12/14
-    static constexpr uint32_t get_cta_geometry() {
+
+    // Geometry table for key-value pairs 
+    //    
+    // 16/16: 13/22 13/24 
+    // 32/16: 11/21 11/22 (this one) 10/24
+    // 32/32: 8/16 7/19 (this one) 6/23
+    // 64/32: 4/20
+    // 32/64: 4/20
+    // 64/64: 3/19
+
+    static constexpr Tuning_T get_cta_geometry() {
         if constexpr (!sorting_pairs) {
             return CTA_MULTIPLIER_NO_PAIR;
         }
@@ -169,7 +186,7 @@ struct radix_tuning : radix_consts {
     }
 
 
-    static constexpr uint32_t get_warp_geometry() {
+    static constexpr Tuning_T get_warp_geometry() {
         if constexpr (!sorting_pairs) {
             return REORDER_WARPS_NO_PAIR;
         }
@@ -179,29 +196,34 @@ struct radix_tuning : radix_consts {
                 (size_el <= 8) ? 19 :
                 (size_el <= 12) ? 20 :
                 (size_el <= 16) ? 19 :
-                20;
+                19;
     }
 
 
-    static constexpr uint32_t CTA_MULTIPLIER    = get_cta_geometry();
-    static constexpr uint32_t REORDER_WARPS     = get_warp_geometry();
+    static constexpr Tuning_T CTA_MULTIPLIER    = get_cta_geometry();
+    static constexpr Tuning_T REORDER_WARPS     = get_warp_geometry();
     
-    static constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
-    static constexpr uint32_t REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
-    static constexpr uint32_t SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items / CTA
-    static constexpr uint32_t REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
-    static constexpr uint32_t REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
-    static constexpr uint32_t REORDER_LOGICAL_BLOCK_SIZE = SORT_BLOCK_SIZE;
+    static constexpr Tuning_T RADIX_PASSES = sizeof(Key_T);
+    static constexpr Tuning_T REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
+    static constexpr Tuning_T SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items / CTA
+    static constexpr Tuning_T REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
+    static constexpr Tuning_T REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
+    static constexpr Tuning_T REORDER_LOGICAL_BLOCK_SIZE = SORT_BLOCK_SIZE;
 
     static_assert(
         (SORT_BLOCK_SIZE % REORDER_THREADS) == 0,
         "SORT_BLOCK_SIZE must be divisible by REORDER_THREADS"
     );
 
+    static_assert(
+        (REORDER_WARPS >= 8) && (REORDER_WARPS <= 32),
+        "REORDER_WARPS must be between 8 and 32"
+    );
+    
+
     using Stage_Ind_T = std::conditional_t<
         (REORDER_LOGICAL_BLOCK_SIZE <= 0xFFFFu) && !FORCE_32BIT_STAGING, uint16_t, uint32_t
     >;
-    //using Stage_Ind_T = uint32_t;
 };
 
 
@@ -247,7 +269,8 @@ struct radix_traits {
         std::conditional_t<sizeof(T) == 8, uint64_t,
         native_u128>>>>;
         
-    static constexpr bool is_signed_integral = std::is_signed_v<T> && std::is_integral_v<T>;
+    static constexpr bool is_signed_integral = 
+        (std::is_signed_v<T> && std::is_integral_v<T>) || std::is_same_v<T, native_i128>;
     static constexpr unsigned_of sign_mask_of = unsigned_of(1) << (sizeof(T) * 8 - 1);
 
     
@@ -281,6 +304,7 @@ struct radix_traits {
 
         U bits = type_to_bits(x);
         if constexpr (std::is_floating_point_v<T>) {
+
             bits = (bits & sign_mask_of) ? ~bits : (bits ^ sign_mask_of);
         } else if constexpr (is_signed_integral) {
             bits ^= sign_mask_of;

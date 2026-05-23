@@ -23,6 +23,8 @@
 #define USE_CUDA_GRAPH_SORT     1
 #define EXIT_EARLY_OPT          0
 
+#define LOW_N                   (1 << 22)
+
 
 namespace rsort {
 
@@ -31,10 +33,11 @@ template <
     typename Key_T,
     typename Lookback_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
 struct Sort_Workspace {
-    using RT = radix_tuning<Key_T, Value_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
 
 
     Len_T num_blocks = 0;
@@ -107,9 +110,10 @@ template<
     typename Lookback_Policy,
     typename Key_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
-__global__ __launch_bounds__(radix_tuning<Key_T, Value_T>::REORDER_THREADS)
+__global__ __launch_bounds__(radix_tuning<Key_T, Value_T, Short_Mode>::REORDER_THREADS)
 void onesweep_byte(
     const Key_T* __restrict__ in_keys,
     Key_T* __restrict__ out_keys,
@@ -126,27 +130,26 @@ void onesweep_byte(
     using Lookback_T = typename Lookback_Policy::T;
     using LB = typename Lookback_Policy::conf;
     using U = get_unsigned_of<Key_T>;
-    using Ranker = Radix_Ranker<Key_T, Value_T>;
-    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T>;
+    using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
+    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T, Short_Mode>;
 
-    using RT = radix_tuning<Key_T, Value_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
     using RTraits = radix_traits<Key_T>;
-    constexpr uint32_t SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
-    constexpr uint32_t LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
-    constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
-    constexpr uint32_t ITEMS_PER_WARP = RT::REORDER_ITEMS_PER_WARP;
-    constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
-    constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
-    //constexpr bool SORTING_PAIRS = RT::sorting_pairs;
+    using Tuning_T = typename RT::Tuning_T;
+    constexpr Tuning_T SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+    constexpr Tuning_T LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
+    constexpr Tuning_T ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    constexpr Tuning_T ITEMS_PER_WARP = RT::REORDER_ITEMS_PER_WARP;
+    constexpr Tuning_T RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
+    constexpr Tuning_T RADIX_BITS = RT::RADIX_BITS;
     
-
     static_assert(RADIX_BIN_SIZE == 256, "CUB-like kernel expects 8-bit radix.");
 
 
+    __shared__ typename Scatter::SMem smem;
 #if USE_PSUM_SHARED
     __shared__ Lookback_T p_sum[RADIX_BIN_SIZE];
 #endif
-    __shared__ typename Scatter::SMem smem;
 
     uint32_t block_index = (uint32_t)blockIdx.x;
     const int bin_owner = (int)threadIdx.x < (int)RADIX_BIN_SIZE;
@@ -162,7 +165,7 @@ void onesweep_byte(
     int ranks[ITEMS_PER_THREAD];
 
     int warp = (int)threadIdx.x / WARP_SIZE;
-    int lane = (int)lane_id_u32();
+    int lane = lane_id_i32();
 
     int exclusive_digit_prefix = 0;
     if (full_block) {
@@ -186,16 +189,13 @@ void onesweep_byte(
         );
 
     } else {
-        //const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
         const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
         #pragma unroll
         for (int i = 0; i < ITEMS_PER_THREAD; ++i) {
             //uint32_t idx = warp_base + lane + i * WARP_SIZE;
             uint64_t idx = warp_base64 + (uint64_t)lane + (uint64_t)i * WARP_SIZE;
             
-            // The filler key must map to the last radix bin in the current order.
-            //keys[i] = twiddle_in<Descending, Key_T>(
-            //    (idx < n) ? in_keys[idx] : tail_filler_key<Descending, Key_T>());
+
             keys[i] = (idx < (uint64_t)n)
                 ? RTraits::twiddle_in<Descending>(in_keys[(Len_T)idx])
                 : RTraits::tail_filler_bits();
@@ -215,7 +215,7 @@ void onesweep_byte(
         );
 
     }
-    //__syncthreads(); // taken out to not mess with the next 2 __sync's performance
+    //__syncthreads(); // taken out to not mess with the next __sync's performance
 
     Lookback_T p = 0;
     if (bin_owner) {
@@ -250,10 +250,10 @@ void onesweep_byte(
     __syncthreads();
 
 
-    size_t src_lane_base = (size_t)warp * ITEMS_PER_WARP + (size_t)lane;
     // scattering
+    size_t src_lane_base = (size_t)warp * ITEMS_PER_WARP + (size_t)lane;
     if (full_block) {
-        Scatter::template scatter_staged<true, Descending, Len_T>(
+        Scatter::template scatter_staged<true, Descending>(
             &smem,
             in_keys,
             keys, ranks,
@@ -261,10 +261,11 @@ void onesweep_byte(
             actual_tile_items,
             bit_location,
             block_base,
-            in_vals, out_vals, src_lane_base
+            src_lane_base,
+            in_vals, out_vals
         );
     } else {
-        Scatter::template scatter_staged<false, Descending, Len_T>(
+        Scatter::template scatter_staged<false, Descending>(
             &smem,
             in_keys,
             keys, ranks,
@@ -272,10 +273,10 @@ void onesweep_byte(
             actual_tile_items,
             bit_location,
             block_base,
-            in_vals, out_vals, src_lane_base
+            src_lane_base,
+            in_vals, out_vals
         );
     }
-    //Staging::scatter_staged<false, Descending, Lookback_T, Key_T, Len_T, U, Value_T>(
 }
 
 
@@ -320,7 +321,8 @@ template <
     typename Lookback_Policy,
     typename Key_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
 static void onesweep_byte_sort_enqueue(
     cudaStream_t stream,
@@ -342,13 +344,14 @@ static void onesweep_byte_sort_enqueue(
     constexpr bool lb_epoch = Lookback_Policy::epoch;
     constexpr bool lb_reuse = Lookback_Policy::reuse;
 
-    using RT = radix_tuning<Key_T, Value_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
     constexpr uint32_t REORDER_THREADS = RT::REORDER_THREADS;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
 
     using H = histogram_tuning;
     constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
+
 
     // conditionally call memsets according to lookback policy
     if constexpr(lb_reuse) {
@@ -424,7 +427,7 @@ static void onesweep_byte_sort_enqueue(
         }
 
         // onesweep entry
-        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T>
+        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode>
         <<<num_blocks, REORDER_THREADS, 0, stream>>>(
             in, out, n, d_gp, look_partial_pass, it, lb_bits, in_vals, out_vals
         );
@@ -458,7 +461,8 @@ template <
     typename Lookback_Policy,
     typename Key_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
 >
 static void onesweep_byte_sort_impl(
     Key_T* d_inout,
@@ -472,7 +476,7 @@ static void onesweep_byte_sort_impl(
 
     using LB = typename Lookback_Policy::conf;
     using Lookback_T = typename Lookback_Policy::T;
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T>;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
 
 
     Workspace ws = Workspace::template build<Lookback_Policy>(n);
@@ -485,14 +489,14 @@ static void onesweep_byte_sort_impl(
 
     // Continue to entry point
     auto view = ws.bind(d_workspace);
-    onesweep_byte_sort_enqueue<Descending, Lookback_Policy, Key_T, Len_T, Value_T>(
+    onesweep_byte_sort_enqueue<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode>(
         stream, d_inout, view.tmp, view.gp, view.counter,
         view.look_partial, n, ws.num_blocks, ws.lb_els, d_inout_vals, view.tmp_vals
     );
 }
 
 
-// Policy swtich
+// Policy swtich (according to array size)
 template<
     bool Descending,
     typename Key_T,
@@ -507,21 +511,27 @@ static inline void looback_policy_enforcer(
     Value_T* d_inout_vals = nullptr,
     cudaStream_t stream = 0
 ) {
-    
+        
+    if (n <= LOW_N) {
+        onesweep_byte_sort_impl<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
+                d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
+        return;
+    }
+
     Lookback_Modes mode = get_lookback_mode(n); // according to array size
 
     // template heavy
     switch(mode) {
         case Lookback_Modes::u32_epoch:
-            onesweep_byte_sort_impl<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T>(
+            onesweep_byte_sort_impl<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
             break;
         case Lookback_Modes::u32_plain:
-            onesweep_byte_sort_impl<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T>(
+            onesweep_byte_sort_impl<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
             break;
         case Lookback_Modes::u64_epoch:
-            onesweep_byte_sort_impl<Descending, General_LB_Policy, Key_T, Len_T, Value_T>(
+            onesweep_byte_sort_impl<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
             break;
         default:
@@ -544,12 +554,13 @@ static inline void onesweep_byte_sort_wrap(
     size_t* temp_bytes,
     uint8_t* d_workspace,
     Len_T n,
-    Value_T* d_inout_vals = nullptr
+    Value_T* d_inout_vals = nullptr,
+    cudaStream_t capture_stream = nullptr
 ) {
 
-    cudaStream_t capture_stream = nullptr;
-#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
-    if (d_workspace != nullptr) {
+//#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
+    //if (d_workspace != nullptr) {
+    if ((d_workspace != nullptr) && USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT) {
         cudaGraph_t graph = nullptr;
         cudaGraphExec_t exec = nullptr;
         cudaStream_t stream = 0;
@@ -569,7 +580,7 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamDestroy(capture_stream);
         return;
     }
-#endif
+//#endif
     looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
         d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
     );
@@ -585,7 +596,8 @@ static inline void onesweep_byte_sort(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
 ) {
     
     onesweep_byte_sort_wrap<false, Key_T, size_t, no_value_t>(
@@ -593,7 +605,8 @@ static inline void onesweep_byte_sort(
         temp_bytes,
         d_workspace,
         n,
-        nullptr
+        nullptr,
+        capture_stream
     );
 }
 
@@ -603,7 +616,8 @@ static inline void onesweep_byte_sort_descending(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
 ) {
     
     onesweep_byte_sort_wrap<true, Key_T, size_t, no_value_t>(
@@ -611,7 +625,8 @@ static inline void onesweep_byte_sort_descending(
         temp_bytes,
         d_workspace,
         n,
-        nullptr
+        nullptr,
+        capture_stream
     );
 }
 
@@ -622,7 +637,8 @@ static inline void onesweep_byte_sort_pairs(
     Value_T* d_inout_values,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
 ) {
     
     onesweep_byte_sort_wrap<false, Key_T, size_t, Value_T>(
@@ -630,7 +646,8 @@ static inline void onesweep_byte_sort_pairs(
         temp_bytes,
         d_workspace,
         n,
-        d_inout_values
+        d_inout_values,
+        capture_stream
     );
 }
 
@@ -641,7 +658,8 @@ static inline void onesweep_byte_sort_pairs_descending(
     Value_T* d_inout_values,
     size_t* temp_bytes,
     uint8_t* d_workspace,
-    Len_T n
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
 ) {
     
     onesweep_byte_sort_wrap<true, Key_T, size_t, Value_T>(
@@ -649,8 +667,19 @@ static inline void onesweep_byte_sort_pairs_descending(
         temp_bytes, 
         d_workspace,
         n,
-        d_inout_values
+        d_inout_values,
+        capture_stream
     );
 }
+
+
+/*
+    Note:
+
+    It would be interesting to have an API for AoS input
+    and do the conversion to SoA automatically. But will
+    have to wait for reflection to get to NVCC I guess.
+*/
+
 
 } //namespace rsort

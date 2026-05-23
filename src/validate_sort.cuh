@@ -9,17 +9,24 @@
 
 #include "benchmark_sort.cuh"
 
+// User knobs (check validation types below)
+#define PAIR_VALIDATION     1
+#define U128_BIT_VALIDATION 1
 
-#ifndef VALIDATION_TEST
-#define VALIDATION_TEST     1
-#endif 
 
-#define PAIR_VALIDATION     1   
+#if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION
+    #define NATIVE_U128 unsigned __int128,
+    #define NATIVE_I128 __int128,
+#else
+    #define NATIVE_U128
+    #define NATIVE_I128
+#endif
+
 
 // ======================= Validation Types =======================
 #define U32_TYPE    uint32_t,
-#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t,
-#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t,
+#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128
+#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128
 #define FP_TYPES    float, double,
 #define ALL_TYPES   INT_TYPES FP_TYPES
 
@@ -27,6 +34,9 @@
 #define TYPE_SET_TEST ALL_TYPES
 // ================================================================
 
+#ifndef VALIDATION_TEST
+#define VALIDATION_TEST     1
+#endif 
 
 namespace rsort {
 
