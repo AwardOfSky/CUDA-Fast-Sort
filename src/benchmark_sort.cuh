@@ -171,7 +171,7 @@ int benchmark(
     // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));
     if constexpr (SORTING_PAIRS) {
-        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<4>(sizeof(Value_T) * n))); // 
+        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n))); // 
     }
     launch_sorting_kernel();
     CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
@@ -188,7 +188,7 @@ int benchmark(
         if constexpr (SORTING_PAIRS) {
             init_keys<uint32_t, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
                 (uint32_t *)d_vals,
-                align_up_power<4>(sizeof(Value_T) * n) / sizeof(uint32_t),
+                align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) / sizeof(uint32_t),
                 seed,
                 arr_mode
             );

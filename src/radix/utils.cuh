@@ -80,14 +80,14 @@ __device__ __forceinline__ int active_thread_limit(uint32_t x) {
 }
 
 
-__device__ __forceinline__ int lane_id_u32() {
+__device__ __forceinline__ uint32_t lane_id_i32() {
     int x;
     asm volatile("mov.u32 %0, %%laneid;" : "=r"(x));
     return x;
 }
 
 
-__device__ __forceinline__ int lane_mask_le_u32() {
+__device__ __forceinline__ uint32_t lane_mask_le_i32() {
     int x;
     asm volatile("mov.u32 %0, %%lanemask_le;" : "=r"(x));
     return x;

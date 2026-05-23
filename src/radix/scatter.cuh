@@ -93,6 +93,9 @@ struct Scatter {
             size_t src_lane_base = 0,
             Value_T* __restrict__ in_vals = nullptr
         ) {
+            //[[maybe_unused]] int warp = (int)threadIdx.x / WARP_SIZE;
+            //[[maybe_unused]] int lane = lane_id_i32();
+            //[[maybe_unused]] size_t src_lane_base = (size_t)warp * RT::REORDER_ITEMS_PER_WARP + (size_t)lane;
             [[maybe_unused]] Stage_Ind_T src_local = (Stage_Ind_T)(src_lane_base + (size_t)k * WARP_SIZE);
 
             // init keys
@@ -167,9 +170,9 @@ struct Scatter {
         uint32_t actual_tile_items,
         uint32_t bit_location,
         Len_T block_base,
+        size_t src_lane_base = 0,
         Value_T* __restrict__ in_vals = nullptr,
-        Value_T* __restrict__ out_vals = nullptr,
-        const size_t src_lane_base = 0
+        Value_T* __restrict__ out_vals = nullptr
     ) {
 
 
@@ -177,6 +180,7 @@ struct Scatter {
         // init staging
         #pragma unroll
         for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
+            //smem->stage_init(keys, ranks, k, block_base, actual_tile_items, in_vals);
             smem->stage_init(keys, ranks, k, block_base, actual_tile_items, src_lane_base, in_vals);
 
         }
