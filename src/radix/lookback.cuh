@@ -20,7 +20,7 @@ namespace rsort {
 // user parameters
 constexpr uint32_t LOOKBACK_NANOSLEEP_INITIAL = 4;
 constexpr uint32_t LOOKBACK_NANOSLEEP_MAX = 256;
-constexpr uint32_t LOOKBACK_SPINS = 1; // 2 for 18 CTAs, 1 for 38
+constexpr uint32_t LOOKBACK_SPINS = 1; // 2 SPINS for few CTAs, 1 for MORE
 
 static_assert(
     !(LOOKBACK_EPOCH_TAG && !REUSE_LOOKBACK_PER_PASS && LOOKBACK_OVERRIDE),

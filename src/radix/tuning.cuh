@@ -304,7 +304,6 @@ struct radix_traits {
 
         U bits = type_to_bits(x);
         if constexpr (std::is_floating_point_v<T>) {
-
             bits = (bits & sign_mask_of) ? ~bits : (bits ^ sign_mask_of);
         } else if constexpr (is_signed_integral) {
             bits ^= sign_mask_of;
@@ -320,7 +319,6 @@ struct radix_traits {
 
     template<bool Descending>
     static __host__ __device__ __forceinline__ T twiddle_out(unsigned_of bits) {
-
         if constexpr (Descending) {
             bits = ~bits;
         }

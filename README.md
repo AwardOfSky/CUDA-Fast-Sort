@@ -30,18 +30,16 @@ Therefore, many of the componenets are, effectively, a simplified translation of
 
 ### The algorithm currently implements:
 
-- keys of all the standard types <sup>1</sup>
+- Keys of all the standard types <sup>1</sup>
 - "semi"-arbitrary array sizes <sup>2</sup>
-- ascend, descend
-- limited support for 128-bit keys (only integrals for now)
-- Key-value pair sorting <sup>3</sup>
+- Ascend/descend
+- Key-value pair sorting
+- Support for 128-bit keys
 
 <sup>1</sup> Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
 This is the same idea CUB uses. Support for descending sorting is achieved using the same principle: by simply inverting the bit representation during reordering.
 
 <sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurt performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even at 32 bits.
-
-<sup>3</sup> Implemented, tested, validated (all 2200 tests). Benchmarked only preliminary (about same speedup obtained for key sorting - see Bencharmks section).
 
 ### Assumptions and missing features (different from CUB):
 
@@ -129,11 +127,34 @@ Some noteworthy micro-optimizations:
 - **PTX instructions** - In some areas, it is worth getting your hands dirty and writing some raw assembly. As a matter of fact, in the case of ```__match_any_sync()``` this is more a performance requirement rather than a micro-optimization, as the radix label is only 8 bits (in our case), so there is no need to match on a whole 32-bit register, and this falls right in the ballot-counting hot path of the ranker. Other small lane helpers also use PTX, though mostly to avoid including extra CUB libraries (also helps reduce compilation times).
 
 
+## API Interface
+
+The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and acsending/descending sorting:
+
+
+- **onesweep_byte_sort** - Sort an array of keys only in ascending order.
+
+- **onesweep_byte_sort_descending** - Sort an array of keys only in descending order.
+
+- **onesweep_byte_sort_pairs** - Sort an arrays of keys, along with a second array of corresponding values, in ascending order.
+
+- **onesweep_byte_sort_pairs_descending** - Sort an arrays of keys, along with a second array of corresponding values, in descending order.
+
+
+#### Arguments (in order):
+  - `d_inout <Key_T*>` - Input array of `n` elements of type `Key_T` (check validation types). Sorted output is written here. 
+  - `d_inout_values <Value_T*>` - [Only for the KV-pair sorting interfaces]. Input array of `n` elements of type `Value_T`. There are no restrictions for the size or type of `Value_T`.
+  - `temp_bytes <size_t*>` - If null, a call to any of the interfaces will solely calculate the size in bytes of the workspace buffer needed to perform sorting and return. Otherwise, performs the sort.
+  - `d_workspace <uint8_t*>` - Helper memory region compromised of an extra ping-pong buffer for sorting out-of-place, a lookback buffer, histogram counters, as well as any other data needed for sorting.
+  - `n <Len_T>` - Size of input array in number of elements. `Len_T` should be an integral type.
+  - `capture_stream <cudaStream_t>` - [Optional: Deafult = `nullptr`] If not null, a CUDA graph will be created for the kernel operation of the algorithm, in which case `capture_stream` must be valid.
+
+
 ## Compilation and Usage 
 
 #### Compile with:
 ```bash
-nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
+nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu(.exe)
 ```
 
 #### Run:
@@ -297,6 +318,16 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
  -  **Circular buffer** - The [GPUOpen article](https://gpuopen.com/learn/boosting_gpu_radix_sort/) that motivated this project describes a decoupled lookback using a circular buffer. After much effort to reproduce this approach, I could not achieve consistent performance comparable to the coupled variant, so I abandoned the idea.
 
+## Releases
+
+Checklist of standardization efforts from Release 2 onwards:
+
+  - Validation suite passes all test in both Windows (MSVC) and Linux (gcc):
+      - Linux: 3168/3168 tests passed (signed and unsigned 128-bit integers).
+      - Windows: 2200/2200 tests passed.
+  - Compilation of all templating (validation) must return no warnings with both `-std=c++17` and `-std=c++20` flag standards, for Windows (MSVC), and for Linux (gcc).
+  - Updated [monolithic header](monolithic/rsort.cuh).
+  - Updated benchmarking data.
 
 ## Notes and Disclaimers
 

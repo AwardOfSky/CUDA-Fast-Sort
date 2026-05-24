@@ -279,7 +279,8 @@ int benchmark(
     std::string_view sv_temp = type_name<Key_T>();
     std::string_view svt_temp = type_name<Value_T>();
     if (!validation) {
-        printf("\nGPU: %s\n"
+        printf(
+            "\nGPU: %s\n"
             "\nRADIX\t=\t%d\n"
             "N\t=\t%llu\n"
             "Type\t=\t%.*s\n"
@@ -359,7 +360,7 @@ int benchmark(
     if (!validation) {
         printf("digit counts ok? %s\n", hist_ok ? "YES" : "NO");
     } else {
-        std::string pair_str = "Pair: " + std::string(svt_temp) + " ,";
+        std::string pair_str = "Pair: " + std::string(svt_temp) + ",";
         printf(
             "Sorting %llu els "
             "of type %.*s, %.*s (%.3f MB)"

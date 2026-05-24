@@ -558,8 +558,9 @@ static inline void onesweep_byte_sort_wrap(
     cudaStream_t capture_stream = nullptr
 ) {
 
-//#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
-    //if (d_workspace != nullptr) {
+    static_assert(std::is_integral_v<Len_T>, "Type of N (Len_T) must be an integral type");
+
+    //#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
     if ((d_workspace != nullptr) && USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT) {
         cudaGraph_t graph = nullptr;
         cudaGraphExec_t exec = nullptr;
@@ -580,7 +581,7 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamDestroy(capture_stream);
         return;
     }
-//#endif
+    
     looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
         d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
     );

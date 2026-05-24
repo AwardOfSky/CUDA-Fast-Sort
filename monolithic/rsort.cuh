@@ -1,20 +1,37 @@
-// This is rsort's monolithic header.
-// might not be up to date with delevelopment!
-#pragma once
+/*
+    This is rsort's monolithic header.
+    Upcdated for release versions.
+    Might not be up to date with active delevelopment!
 
-/* 
+    Validation suite was run both in Windows (MSVC) and Linux (gcc):
+        Linux: 3168/3168 tests passed (signed and unsigned 128-bit integers)
+        Windows: 2200/2200 tests passed
+    Compilation tested with both -std=c++17 and -std=c++20 standards
+    Validation is template HEAVY! Only enable if you want to run validation.
+
+    Compile flags:
+        nvcc -O3 -std=c++17 -arch=sm_86
+    Example: 
+        ./rsort --n 10000000 --iterations 30
+    Validation:
+        ./rsort --validation --iterations 1 --warmup 0
+
     TODOs:
-    - change C-style pointers to C++ style
-    - add suport for long doubles
-    - key pair types
+    - Change C-style pointers to C++ style
+    - Add suport for long doubles
+    - AoS API (when nvcc gets reflection)
 */
+
+
+#pragma once
 
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include <string>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 #include <string_view>
 
@@ -25,24 +42,16 @@
 #endif
 
 
-// Template heavy, only enable if you want to run validation
-#define VALIDATION_TEST     0
+// ============================== User knobs ==============================
 
-// ===================== Validation Types =====================
-#define U32_TYPE    uint32_t,
-#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t,
-#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t,
-#define FP_TYPES    float, double,
-#define ALL_TYPES   INT_TYPES FP_TYPES
+// (check validation types below)
+#define VALIDATION_TEST                 1
+#define PAIR_VALIDATION                 1
+#define U128_BIT_VALIDATION             1
 
-// Change types to test HERE!!!
-#define TYPE_SET_TEST ALL_TYPES
-// ============================================================
-
-// user knobs
-#define USE_PSUM_SHARED         1
-#define USE_CUDA_GRAPH_SORT     1
-#define EXIT_EARLY_OPT          0
+#define FORCE_32BIT_STAGING             1
+#define STAGE_KEYS_OVERRIDE             staging_modes::automatic
+#define STAGE_VALS_OVERRIDE             staging_modes::automatic
 
 #define LOOKBACK_OVERRIDE               0
 #define LOOKBACK_EPOCH_TAG              1
@@ -51,135 +60,414 @@
 #define USE_INLINE_LOOKBACK             0
 #define LOOKBACK_USE_NANOSLEEP_BACKOFF  1
 
+// 2 for 18 CTAs, 1 for 38
+#define LOOKBACK_SPINS                  1
+#define LOOKBACK_NANOSLEEP_INITIAL      4
+#define LOOKBACK_NANOSLEEP_MAX          256
 
-namespace parse {
+#define USE_PSUM_SHARED                 1
+#define USE_CUDA_GRAPH_SORT             1
+#define EXIT_EARLY_OPT                  0
 
-// Benchmark configuration members.
-// Struct could be given as a parameter, but better to have
-// individual explicit arguments
-struct Global_Config {
-    size_t n = size_t(1) << 27;
-    uint32_t iterations = 30;
-    uint32_t warmups = 10;
-    uint32_t warm_ms = 250; // ms
-    bool descending = false;
-    bool validation = false;
-};
+#define LOW_N                           (1 << 22)
 
+#define BENCH_DEBUG                     0
 
-void print_usage(const char* exe_name) {
-    printf(
-        "Usage: %s [options]\n"
-        "\n"
-        "Options:\n"
-        "  --n <value>            Number of elements\n"
-        "  --iterations <value>   Timed iterations\n"
-        "  --warmup <value>       Warmup iterations\n"
-        "  --warmup_ms <value>    Minimum warmup time (ms)\n"
-        "  --descending           Sort descending\n"
-        "  --validation           Validate algorithm\n"
-        "  --help                 Show this help\n",
-        exe_name
-    );
-}
+// ========================================================================
 
 
-// simple string to unsigned parser
-template<typename T>
-bool parse_u(const char* s, T* out_value) {
-    if (!s || !*s) {
-        return false;
-    }
-
-    char* end = nullptr;
-    unsigned long long value = strtoull(s, &end, 10);
-
-    if ((end == s) || (*end != '\0')) {
-        return false;
-    }
-
-    if (value > 0xFFFFFFFFul) {
-        return false;
-    }
-
-    *out_value = (T)value;
-    return true;
-}
+// 128 bit type test support
+#if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION
+    #define NATIVE_U128 unsigned __int128,
+    #define NATIVE_I128 __int128,
+#else
+    #define NATIVE_U128
+    #define NATIVE_I128
+#endif
 
 
-// quick parser
-bool args(int argc, char** argv, Global_Config* conf) {
-    for (int i = 1; i < argc; ++i) {
-        const char* arg = argv[i];
+//  ========================== Validation Types ===========================
 
-        if (!strcmp(arg, "--help")) {
-            print_usage(argv[0]);
-            return false; // caller can treat this specially if desired
-        } else if (!strcmp(arg, "--descending")) {
-            conf->descending = true;
-        } else if (!strcmp(arg, "--validation")) {
-            conf->validation = true;
-        } else if (!strcmp(arg, "--n")) {
-            if (i + 1 >= argc) {
-                printf("Error: missing value after --n\n");
-                return false;
-            }
-            if (!parse_u<size_t>(argv[++i], &conf->n)) {
-                printf("Error: invalid value for --n: %s\n", argv[i]);
-                return false;
-            }
-        } else if (!strcmp(arg, "--iterations")) {
-            if (i + 1 >= argc) {
-                printf("Error: missing value after --iterations\n");
-                return false;
-            }
-            if (!parse_u<uint32_t>(argv[++i], &conf->iterations)) {
-                printf("Error: invalid value for --iterations: %s\n", argv[i]);
-                return false;
-            }
-        } else if (!strcmp(arg, "--warmup")) {
-            if (i + 1 >= argc) {
-                printf("Error: missing value after --warmup\n");
-                return false;
-            }
-            if (!parse_u<uint32_t>(argv[++i], &conf->warmups)) {
-                printf("Error: invalid value for --warmup: %s\n", argv[i]);
-                return false;
-            }
-        } else if (!strcmp(arg, "--warmup_ms")) {
-            if (i + 1 >= argc) {
-                printf("Error: missing value after --warmup_ms\n");
-                return false;
-            }
-            if (!parse_u<uint32_t>(argv[++i], &conf->warm_ms)) {
-                printf("Error: invalid value for --warmup_ms: %s\n", argv[i]);
-                return false;
-            }
-        } else {
-            printf("Error: unknown argument: %s\n", arg);
-            return false;
-        }
-    }
+#define U32_TYPE    uint32_t,
+#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128
+#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128
+#define FP_TYPES    float, double,
+#define ALL_TYPES   INT_TYPES FP_TYPES
 
-    return true;
-}
+// === Change types to test HERE vvv ===
+#define TYPE_SET_TEST ALL_TYPES
 
-} //namespace parse
-
-
+// ========================================================================
 
 #define WARP_SIZE       32
 static_assert(WARP_SIZE == 32, "This code assumes 32-lane NVIDIA hardware warps");
 
 
+// ================================ Tuning ================================
+
+namespace rsort {
+
+// Staging modes, policy and scatter logic could be in scatter.cuh, but makes more sense
+// to define it here at the base because it also influences kernel geometry and tuning.
+// This header defines modes and tuning, including staging. scatter.cuh defines how 
+// those staging modes behave, along with scattering.
+enum class staging_modes : uint32_t {
+    automatic   = 0,
+    disabled    = 1,
+    indices     = 2,
+    direct      = 3
+};
+
+
+struct staging_pair {
+    staging_modes keys;
+    staging_modes vals;
+};
+
+struct no_value_t {};
+
+struct radix_consts {
+    using Tuning_T = uint32_t; // uint32_t
+
+    static constexpr Tuning_T RADIX_BITS = 8;
+    static constexpr Tuning_T RADIX_BIN_SIZE = 1u << RADIX_BITS;
+    static constexpr Tuning_T RADIX_MASK = RADIX_BIN_SIZE - 1u;
+};
+
+
+// Tuning (extends constants)
+template<
+    typename Key_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
+struct radix_tuning : radix_consts {
+
+    static constexpr bool sorting_pairs = !std::is_same_v<Value_T, no_value_t>;
+
+    // The staging policy is a very simple heuristic for now. Basically:
+    //
+    // Keys will always be staged directly to avoid double twiddling,
+    // except when the size is bogus, like more than 128-bit
+    // (which is not even supported anyways).
+    // So, effectively, keys are always staged directly.
+    // 
+    // Values will be staged depending on remaining size budget
+    // we will set value staging to direct unless we're  already overshooting
+    // our size budget per element (128 bits for now), in which case we revert
+    // to index staging.
+    //
+    // Both staging modes can be overwritten
+    //
+    // Notes:
+    // - Key Staging can't be disabled
+    // - Value staging can be disabled,
+    //   but if so, we have to revert key staging to indices
+    static constexpr staging_pair staging_policy() {
+
+        // default policy
+        constexpr staging_modes default_keys =
+            (sizeof(Key_T) <= 16)
+                ? staging_modes::direct
+                : staging_modes::indices;
+
+        constexpr Tuning_T key_size =
+            (default_keys == staging_modes::direct)
+                ? sizeof(Key_T)
+                : sizeof(uint32_t);
+
+        constexpr Tuning_T size_budget = 16;
+        constexpr staging_modes default_vals =
+            ((key_size + sizeof(Value_T)) <= size_budget)
+                ? staging_modes::direct
+                : staging_modes::indices;
+
+        // override
+        constexpr staging_modes keys_staging =
+            (STAGE_KEYS_OVERRIDE != staging_modes::automatic)
+                ? STAGE_KEYS_OVERRIDE
+                : default_keys;
+        
+        constexpr staging_modes vals_staging =
+            (STAGE_VALS_OVERRIDE != staging_modes::automatic)
+                ? STAGE_VALS_OVERRIDE
+                : default_vals;
+
+        // sanity checks
+        static_assert(
+                keys_staging != staging_modes::disabled,
+                "Key staging can't be disabled!"
+        );
+        constexpr staging_modes final_vals = 
+            sorting_pairs ? vals_staging : staging_modes::disabled;
+
+        constexpr staging_modes final_keys =
+            (sorting_pairs && (final_vals == staging_modes::disabled))
+                ? staging_modes::indices
+                : keys_staging;
+
+        return {final_keys, final_vals};
+    }
+
+    static constexpr staging_pair staging = staging_policy();
+
+
+    // Default geometry table
+    //
+    // These CTA_MULTIPLIER and REORDER_WARPS are for sm_86
+    // In the end, these two constants should be a lookup table
+    // according to the sm_xx of the card, but I only have this one
+    // 32-bit - 21/12
+    // 64-bit - 6/14 5/17 4/22 7/22(this one?) 6/26 6/27
+    // 128-bit - 2/19, 3/25
+
+    static constexpr Tuning_T get_default_cta_geometry() {
+        //return  (sizeof(Key_T) <= 4) ? 21 : // 21
+        return  (sizeof(Key_T) <= 4) ? (Short_Mode ? 21 : 21) : // 21
+                (sizeof(Key_T) <= 8) ? (Short_Mode ? 6  : 7 ) : // 7 (6)
+                (Short_Mode ? 5 : 2); // TODOs: optimize this (128 bits)
+    }
+
+
+    static constexpr Tuning_T get_default_warp_geometry() {
+        //return  (sizeof(Key_T) <= 4) ? 12 : // 12 
+        return  (sizeof(Key_T) <= 4) ? (Short_Mode ? 12 : 12) : // 12 
+                (sizeof(Key_T) <= 8) ? (Short_Mode ? 12 : 22) : // 22 (12)
+                (Short_Mode ? 15 : 19);
+    }
+
+    static constexpr Tuning_T CTA_MULTIPLIER_NO_PAIR = get_default_cta_geometry();
+    static constexpr Tuning_T REORDER_WARPS_NO_PAIR = get_default_warp_geometry();
+    
+
+    static constexpr Tuning_T size_el_key = 
+        (staging.keys == staging_modes::direct) ? sizeof(Key_T) : sizeof(uint32_t);
+    static constexpr Tuning_T size_el_val = 
+        sorting_pairs ? 
+            ((staging.vals == staging_modes::direct) ?
+                sizeof(Value_T) :
+                sizeof(uint32_t)) :
+            0;
+    static constexpr Tuning_T size_el = size_el_key + size_el_val;
+
+
+    // Geometry table for key-value pairs 
+    //    
+    // 16/16: 13/22 13/24 
+    // 32/16: 11/21 11/22 (this one) 10/24
+    // 32/32: 8/16 7/19 (this one) 6/23
+    // 64/32: 4/20
+    // 32/64: 4/20
+    // 64/64: 3/19
+
+    static constexpr Tuning_T get_cta_geometry() {
+        if constexpr (!sorting_pairs) {
+            return CTA_MULTIPLIER_NO_PAIR;
+        }
+
+        return  (size_el <= 4) ? 13 :
+                (size_el <= 6) ? 11 :
+                (size_el <= 8) ? 7 :
+                (size_el <= 12) ? 4 :
+                (size_el <= 16) ? 3 :
+                2;
+    }
+
+
+    static constexpr Tuning_T get_warp_geometry() {
+        if constexpr (!sorting_pairs) {
+            return REORDER_WARPS_NO_PAIR;
+        }
+
+        return  (size_el <= 4) ? 23 :
+                (size_el <= 6) ? 22 :
+                (size_el <= 8) ? 19 :
+                (size_el <= 12) ? 20 :
+                (size_el <= 16) ? 19 :
+                19;
+    }
+
+
+    static constexpr Tuning_T CTA_MULTIPLIER    = get_cta_geometry();
+    static constexpr Tuning_T REORDER_WARPS     = get_warp_geometry();
+    
+    static constexpr Tuning_T RADIX_PASSES = sizeof(Key_T);
+    static constexpr Tuning_T REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
+    static constexpr Tuning_T SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items / CTA
+    static constexpr Tuning_T REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
+    static constexpr Tuning_T REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
+    static constexpr Tuning_T REORDER_LOGICAL_BLOCK_SIZE = SORT_BLOCK_SIZE;
+
+    static_assert(
+        (SORT_BLOCK_SIZE % REORDER_THREADS) == 0,
+        "SORT_BLOCK_SIZE must be divisible by REORDER_THREADS"
+    );
+
+    static_assert(
+        (REORDER_WARPS >= 8) && (REORDER_WARPS <= 32),
+        "REORDER_WARPS must be between 8 and 32"
+    );
+    
+
+    using Stage_Ind_T = std::conditional_t<
+        (REORDER_LOGICAL_BLOCK_SIZE <= 0xFFFFu) && !FORCE_32BIT_STAGING, uint16_t, uint32_t
+    >;
+};
+
+
+template<typename T>
+struct radix_traits {
+
+    // 128 bit support (for integer types in GCC and Clang)
+#if defined(__SIZEOF_INT128__)
+    using native_u128 = unsigned __int128;
+    using native_i128 = __int128;
+    static constexpr bool has_native_u128 = true;
+#else
+    using native_u128 = uint64_t;
+    using native_i128 = int64_t;
+    static constexpr bool has_native_u128 = false;
+#endif
+    static constexpr bool type_is_valid_128 = 
+        std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
+
+
+    // type compliance asserts 
+    static_assert(
+        std::is_arithmetic_v<T> || type_is_valid_128,
+        "Radix type must be a numeric."
+    );
+    static_assert(sizeof(T) <= 16, "Radix type too large.");
+    static_assert(
+        (sizeof(T) != 16) || has_native_u128,
+        "128-bit keys require native same-width unsigned type support."
+    );
+    static_assert(
+        (sizeof(T) != 16) || type_is_valid_128,
+        "Only 128-bit integer keys are supported!"
+    );
+    // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort
+
+
+    // set quivalent unsigned type
+    using unsigned_of =
+        std::conditional_t<sizeof(T) == 1, uint8_t,
+        std::conditional_t<sizeof(T) == 2, uint16_t,
+        std::conditional_t<sizeof(T) == 4, uint32_t,
+        std::conditional_t<sizeof(T) == 8, uint64_t,
+        native_u128>>>>;
+        
+    static constexpr bool is_signed_integral = 
+        (std::is_signed_v<T> && std::is_integral_v<T>) || std::is_same_v<T, native_i128>;
+    static constexpr unsigned_of sign_mask_of = unsigned_of(1) << (sizeof(T) * 8 - 1);
+
+    
+    // unsigned and type T bit convertion (for twiddling)  
+    static __device__ __forceinline__ T bits_to_type(unsigned_of x) {
+        if constexpr(std::is_same_v<T, float>) {
+            return __uint_as_float(x);
+        } else if constexpr (std::is_same_v<T, double>) {
+            return __longlong_as_double(int64_t(x));
+        } else {
+            return T(x);
+        }
+    }
+
+
+    static __device__ __forceinline__ unsigned_of type_to_bits(T x) {
+        if constexpr(std::is_same_v<T, float>) {
+            return __float_as_uint(x);
+        } else if constexpr(std::is_same_v<T, double>) {
+            return unsigned_of(__double_as_longlong(x));
+        } else {
+            return unsigned_of(x);
+        }
+    }
+
+
+    // twiddling kernels
+    template <bool Descending>
+    static __host__ __device__ __forceinline__ unsigned_of twiddle_in(T x) {
+        using U = unsigned_of;
+
+        U bits = type_to_bits(x);
+        if constexpr (std::is_floating_point_v<T>) {
+            bits = (bits & sign_mask_of) ? ~bits : (bits ^ sign_mask_of);
+        } else if constexpr (is_signed_integral) {
+            bits ^= sign_mask_of;
+        }
+
+        if constexpr (Descending) {
+            bits = ~bits;
+        }
+
+        return bits;
+    }
+
+
+    template<bool Descending>
+    static __host__ __device__ __forceinline__ T twiddle_out(unsigned_of bits) {
+        if constexpr (Descending) {
+            bits = ~bits;
+        }
+
+        if constexpr (std::is_floating_point_v<T>) {
+            bits = (bits & sign_mask_of) ? (bits ^ sign_mask_of) : ~bits;
+            return bits_to_type(bits);
+        } else if constexpr (is_signed_integral) {
+            return T(bits ^ sign_mask_of);
+        } else {
+            return T(bits);
+        }
+    }
+
+    
+    // Filler for partial blocks
+    static __host__ __device__ __forceinline__ constexpr unsigned_of tail_filler_bits() {
+        return ~unsigned_of{0};
+    }
+
+
+    // Key extractor
+    //template<bool Descending>
+    static __device__ __forceinline__ uint32_t extract_key(unsigned_of x, unsigned_of bit) {
+        //if constexpr (Descending) x = ~x;
+        return (x >> bit) & radix_consts::RADIX_MASK;
+    }
+};
+
+
+// alternative interface
+template<typename T>
+using get_unsigned_of = typename radix_traits<T>::unsigned_of;
+
+} // namespace rsort
+
+
+// ================================ Utils =================================
+
 // ---- memory helpers ----
-static inline size_t align_up_size(size_t x, size_t a) {
-    return (x + (a - 1)) & ~(a - 1);
+template<size_t ALIGN, typename T>
+static inline T align_up_power(T x) {
+    static_assert(
+        (ALIGN & (ALIGN - 1)) == 0,
+        "[align_up_power]: ALIGN must be a power of two."
+    );
+    static_assert(
+        std::is_unsigned_v<T>,
+        "[align_up_power]: requires unsigned integer types."
+    );
+    return (x + (ALIGN - 1)) & ~(ALIGN - 1);
 }
 
 
-static inline size_t reserve_aligned(size_t* off, size_t bytes, size_t align) {
-    *off = align_up_size(*off, align);
+template<size_t ALIGN>
+static inline size_t reserve_aligned(size_t* off, size_t bytes) {
+    static_assert(
+        (ALIGN & (ALIGN - 1)) == 0,
+        "[reserve_aligned]: ALIGN must be a power of two"
+    );
+    *off = align_up_power<ALIGN>(*off);
     size_t at = *off;
     *off += bytes;
     return at;
@@ -220,14 +508,14 @@ __device__ __forceinline__ int active_thread_limit(uint32_t x) {
 }
 
 
-__device__ __forceinline__ int lane_id_u32() {
+__device__ __forceinline__ uint32_t lane_id_i32() {
     int x;
     asm volatile("mov.u32 %0, %%laneid;" : "=r"(x));
     return x;
 }
 
 
-__device__ __forceinline__ int lane_mask_le_u32() {
+__device__ __forceinline__ uint32_t lane_mask_le_i32() {
     int x;
     asm volatile("mov.u32 %0, %%lanemask_le;" : "=r"(x));
     return x;
@@ -235,13 +523,13 @@ __device__ __forceinline__ int lane_mask_le_u32() {
 
 
 __device__ __host__ __forceinline__ uint32_t div_round_up_u32(uint32_t v, uint32_t d) {
-    return v / d + (v % d != 0); // overflow safe
+    return v / d + ((v % d) != 0); // overflow safe
 }
 
 
 template<typename T>
 __device__ __host__ __forceinline__ T div_round_up(T v, T d) {
-    return v / d + (v % d != 0); // overflow safe
+    return v / d + ((v % d) != 0); // overflow safe
 }
 
 
@@ -279,202 +567,48 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
+template <typename T>
+inline uint32_t ceil_log2_size(T n) {
+    static_assert(
+        std::is_integral_v<T> && !std::is_same_v<T, bool>,
+        "[ceil_log2_size]: N must be an integer."
+    );
 
-// Tuning (extends constants)
-struct radix_consts {
-    static constexpr uint32_t RADIX_BITS = 8;
-    static constexpr uint32_t RADIX_BIN_SIZE = 1u << RADIX_BITS;
-    static constexpr uint32_t RADIX_MASK = RADIX_BIN_SIZE - 1u;
-};
+    if (n <= 1) {
+        return 0;
+    }
+
+    int r = 0;
+    T p = 1;
+
+    while (p < n) {
+        p <<= 1;
+        ++r;
+    }
+
+    return r;
+}
 
 
-template<typename T>
-struct radix_tuning : radix_consts {
+// quick and dirty array size estimation
+uint32_t __host__ max_array_bits(const uint32_t vram_gb, const uint32_t sizeof_kv) {
+    if (vram_gb == 0) {
+        return 0;
+    }
 
-    static constexpr uint32_t RADIX_PASSES = sizeof(T);
+    uint32_t gib_bits = 0;
+    uint32_t x = vram_gb;
+    while (x > 1) {
+        x >>= 1;
+        ++gib_bits;
+    }
 
-    // These CTA_MULTIPLIER and REORDER_WARPS are for sm_86
-    // In the end, these two constants should be a lookup table
-    // according to the sm_xx of the card, but I only have this one
-    static constexpr uint32_t CTA_MULTIPLIER =  (sizeof(T) <= 4) ? 21 : 
-                                                (sizeof(T) <= 8) ? 6  : 
-                                                2;
-    static constexpr uint32_t REORDER_WARPS =   (sizeof(T) <= 4) ? 12 :
-                                                (sizeof(T) <= 8) ? 14 :
-                                                20;
+    int32_t elem_adjust = 3 - ceil_log2_size(sizeof_kv);
+    uint32_t base_bits_u64 = 26; // 2 arrays of 64-bit elements fit in 1 GiB
+
+    int32_t bits = base_bits_u64 + elem_adjust + gib_bits;
     
-    static constexpr uint32_t REORDER_THREADS = REORDER_WARPS * WARP_SIZE;
-    static constexpr uint32_t SORT_BLOCK_SIZE = CTA_MULTIPLIER * REORDER_THREADS; // items per CTA
-    static constexpr uint32_t REORDER_ITEMS_PER_THREAD = SORT_BLOCK_SIZE / REORDER_THREADS;
-    static constexpr uint32_t REORDER_ITEMS_PER_WARP = REORDER_ITEMS_PER_THREAD * WARP_SIZE;
-    static constexpr uint32_t REORDER_LOGICAL_BLOCK_SIZE = SORT_BLOCK_SIZE;
-
-    static_assert(
-        (SORT_BLOCK_SIZE % REORDER_THREADS) == 0,
-        "SORT_BLOCK_SIZE must be divisible by REORDER_THREADS"
-    );
-};
-
-
-template<typename U>
-__device__ __forceinline__ uint32_t extract_byte(U x, U bit) {
-    //if constexpr (Descending) x = ~x;
-    return (x >> bit) & radix_consts::RADIX_MASK;
-}
-
-
-template<typename T>
-struct radix_type_traits {
-
-    // 128 bit support (for integer types in GCC and Clang)
-#if defined(__SIZEOF_INT128__)
-    using native_u128 = unsigned __int128;
-    using native_i128 = __int128;
-    static constexpr bool has_native_u128 = true;
-#else
-    using native_u128 = uint64_t;
-    using native_i128 = int64_t;
-    static constexpr bool has_native_u128 = false;
-#endif
-    static constexpr bool type_is_valid_128 = 
-        std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
-
-
-    // type compliance asserts 
-    static_assert(std::is_arithmetic_v<T> || type_is_valid_128, "Radix type must be a numeric.");
-    static_assert(sizeof(T) <= 16, "Radix type too large.");
-    static_assert(
-        (sizeof(T) != 16) || has_native_u128,
-        "128-bit keys require native same-width unsigned type support."
-    );
-    static_assert(
-        (sizeof(T) != 16) || type_is_valid_128,
-        "Only 128-bit integer keys are supported!"
-    );
-    // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort
-
-
-    // set quivalent unsigned type
-    using unsigned_of =
-        std::conditional_t<sizeof(T) == 1, uint8_t,
-        std::conditional_t<sizeof(T) == 2, uint16_t,
-        std::conditional_t<sizeof(T) == 4, uint32_t,
-        std::conditional_t<sizeof(T) == 8, uint64_t,
-        native_u128>>>>;
-        
-    static constexpr bool is_signed_integral = std::is_signed_v<T> && std::is_integral_v<T>;
-    static constexpr unsigned_of sign_mask_of = unsigned_of(1) << (sizeof(T) * 8 - 1);
-
-    // unsigned and type T bit convertion (for twiddling)  
-    static __device__ __forceinline__ T bits_to_type(unsigned_of x) {
-        if constexpr(std::is_same_v<T, float>) {
-            return __uint_as_float(x);
-        } else if constexpr (std::is_same_v<T, double>) {
-            return __longlong_as_double(int64_t(x));
-        } else {
-            return T(x);
-        }
-    }
-
-
-    static __device__ __forceinline__ unsigned_of type_to_bits(T x) {
-        if constexpr(std::is_same_v<T, float>) {
-            return __float_as_uint(x);
-        } else if constexpr(std::is_same_v<T, double>) {
-            return unsigned_of(__double_as_longlong(x));
-        } else {
-            return unsigned_of(x);
-        }
-    }
-
-
-    // quick and dirty array size estimation
-    static uint32_t __host__ max_array_bits(uint32_t vram_gb) {
-        if (vram_gb == 0) {
-            return 0;
-        }
-
-        uint32_t gib_bits = 0;
-        uint32_t x = vram_gb;
-        while (x > 1) {
-            x >>= 1;
-            ++gib_bits;
-        }
-
-        constexpr uint32_t elem_adjust =
-            sizeof(T) == 16 ? -1 :
-            sizeof(T) == 8 ? 0 :
-            sizeof(T) == 4 ? 1 :
-            sizeof(T) == 2 ? 2 :
-            sizeof(T) == 1 ? 3 :
-            0;
-
-        constexpr uint32_t base_bits_u64 = 26; // 2 arrays of 64-bit elements fit in 1 GiB
-        return base_bits_u64 + elem_adjust + gib_bits;
-    }
-};
-
-
-template<typename T>
-using get_unsigned_of = typename radix_type_traits<T>::unsigned_of;
-
-template<typename T>
-static constexpr bool is_signed_integral_v =
-    radix_type_traits<T>::is_signed_integral;
-
-template<typename T>
-static constexpr get_unsigned_of<T> radix_sign_mask_v =
-    radix_type_traits<T>::sign_mask_of;
-
-
-template <bool Descending, typename T>
-__device__ __forceinline__ get_unsigned_of<T> tail_filler_bits() {
-    //constexpr U max_u = (std::numeric_limits<U>::max)();
-    //return max_u;
-
-    using U = get_unsigned_of<T>;
-    return U(~U(0)); // always last in ascending ordered-bit space
-}
-
-
-// twiddling kernels
-template <bool Descending, typename T>
-__host__ __device__ __forceinline__ get_unsigned_of<T> twiddle_in(T x) {
-    using U = get_unsigned_of<T>;
-
-    U bits = radix_type_traits<T>::type_to_bits(x);
-    if constexpr (std::is_floating_point_v<T>) {
-        constexpr U sign_mask = radix_sign_mask_v<T>;
-        bits = (bits & sign_mask) ? ~bits : (bits ^ sign_mask);
-    } else if constexpr (is_signed_integral_v<T>) {
-        bits ^= radix_sign_mask_v<T>;
-    }
-
-    if constexpr (Descending) {
-        bits = ~bits;
-    }
-
-    return bits;
-}
-
-
-template <bool Descending, typename T>
-__host__ __device__ __forceinline__ T twiddle_out(get_unsigned_of<T> bits) {
-    using U = get_unsigned_of<T>;
-
-    if constexpr (Descending) {
-        bits = ~bits;
-    }
-
-    if constexpr (std::is_floating_point_v<T>) {
-        constexpr U sign_mask = radix_sign_mask_v<T>;
-        bits = (bits & sign_mask) ? (bits ^ sign_mask) : ~bits;
-        return radix_type_traits<T>::bits_to_type(bits);
-    } else if constexpr (is_signed_integral_v<T>) {
-        return T(bits ^ radix_sign_mask_v<T>);
-    } else {
-        return T(bits);
-    }
+    return uint32_t(bits >= 0 ? bits : 0);
 }
 
 
@@ -514,11 +648,19 @@ __host__ __device__ __forceinline__ uint32_t mix32(uint32_t x) {
 }
 
 
-template<typename Key_T, typename Len_T>
-__global__ void init_keys(Key_T* a, Len_T n, uint32_t seed, Array_Modes arr_mode) {
+template<typename Key_T, typename Len_T, bool Pass = false>
+__global__ void init_keys(
+    Key_T* a,
+    Len_T n,
+    uint32_t seed,
+    Array_Modes arr_mode = Array_Modes::random
+) {
+
+
     using U = get_unsigned_of<Key_T>;
-    using RT = radix_type_traits<Key_T>;
+    using RTraits = radix_traits<Key_T>;
     
+
     Len_T i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         U x;
@@ -529,8 +671,8 @@ __global__ void init_keys(Key_T* a, Len_T n, uint32_t seed, Array_Modes arr_mode
         } else if constexpr (sizeof(U) <= 8) {
             x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
                 (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
-        } else if constexpr (RT::has_native_u128) {
-            using U128 = typename RT::native_u128;
+        } else if constexpr (RTraits::has_native_u128) {
+            using U128 = typename RTraits::native_u128;
             x = (U128(mix32(i + 0x00000000u) ^ seed) << 96) |
                 (U128(mix32(i + 0x9e3779b9u) ^ seed) << 64) |
                 (U128(mix32(i + 0x3c6ef372u) ^ seed) << 32) |
@@ -543,8 +685,8 @@ __global__ void init_keys(Key_T* a, Len_T n, uint32_t seed, Array_Modes arr_mode
         if (arr_mode == Array_Modes::blank_bytes) {
             if constexpr (sizeof(U) <= 8) {
                 x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
-            } else if constexpr (RT::has_native_u128) {
-                using U128 = typename RT::native_u128;
+            } else if constexpr (RTraits::has_native_u128) {
+                using U128 = typename RTraits::native_u128;
 
                 U128 keep =
                     (U128(0xFF00FF00FF00FF00ull) << 64) |
@@ -560,7 +702,9 @@ __global__ void init_keys(Key_T* a, Len_T n, uint32_t seed, Array_Modes arr_mode
         }
 
         // copy bits to dest
-        a[i] = radix_type_traits<Key_T>::bits_to_type(x);
+        if constexpr (!Pass) {
+            a[i] = RTraits::bits_to_type(x);
+        }
     }
 }
 
@@ -588,17 +732,23 @@ int set_seed_radix(int index) {
 
 
 // ---- other helpers ----
-template<typename T>
+template<typename T, bool ddof = false>
 double stdev(const T* arr, double avg, size_t n) {
     if (n == 0) {
         return 0.0;
     }
+
     double acc = 0.0;
     for (size_t i = 0; i < n; ++i) {
         double temp = (double)arr[i] - avg;
         acc += temp * temp;
     }
-    return std::sqrt(acc / (double)n);
+
+    if constexpr (ddof) {
+        return (n > 1) ? std::sqrt(acc / (double)(n - 1)) : 0.0;
+    } else {
+        return std::sqrt(acc / (double)n);
+    }
 }
 
 
@@ -614,6 +764,8 @@ void sleep_ms(long milliseconds) {
 #endif
 }
 
+
+// ============================== Histogram ===============================
 
 struct histogram_tuning {
     static constexpr uint32_t CARD_SMS                  = 92;
@@ -672,8 +824,8 @@ __device__ __forceinline__ uint32_t block_exclusive_scan_256(
     constexpr uint32_t SCAN256_WARPS = histogram_tuning::SCAN256_WARPS;
 
     int tid = (int)threadIdx.x;
-    const int warp = tid / WARP_SIZE;
-    const int lane = (int)lane_id_u32();
+    int warp = tid / WARP_SIZE;
+    int lane = lane_id_i32();
     
     bool active = tid < (int)radix_consts::RADIX_BIN_SIZE;
 
@@ -718,6 +870,7 @@ __global__ void GHistogram_8bits(
     uint32_t* __restrict__ counter) {
 
     using RT = radix_tuning<Key_T>;
+    using RTraits = radix_traits<Key_T>;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
     constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
@@ -752,11 +905,11 @@ __global__ void GHistogram_8bits(
         for (int j = 0; j < GHIST_ITEMS_PER_THREAD; ++j) {
             Len_T idx = block_ind * GHIST_ITEM_PER_BLOCK + threadIdx.x * GHIST_ITEMS_PER_THREAD + (Len_T)j;
             if (idx < n) {
-                U item = twiddle_in<Descending, Key_T>(inputs[idx]);
+                U item = RTraits::twiddle_in<Descending>(inputs[idx]);
                 #pragma unroll
                 for (int p = 0; p < RADIX_PASSES; ++p) {
                     U bit = start_bits + (U)p * RADIX_BITS;
-                    U b = extract_byte<U>(item, bit);
+                    U b = RTraits::extract_key(item, bit);
                     atomicAdd(&local_counters[p][b], 1u);
                 }
             }
@@ -824,10 +977,7 @@ __global__ void GHistogram_8bits(
 }
 
 
-// user parameters
-constexpr uint32_t LOOKBACK_NANOSLEEP_INITIAL = 4;
-constexpr uint32_t LOOKBACK_NANOSLEEP_MAX = 256;
-constexpr uint32_t LOOKBACK_SPINS = 1; // 2 for 18 CTAs, 1 for 38
+// =============================== Lookback ===============================
 
 static_assert(
     !(LOOKBACK_EPOCH_TAG && !REUSE_LOOKBACK_PER_PASS && LOOKBACK_OVERRIDE),
@@ -1146,6 +1296,8 @@ struct Lookback {
 };
 
 
+// ================================ Ranker ================================
+
 // Same as in CUB header but with no ternary operator (retval at 0xFFFFFFFFu)
 __device__ __forceinline__ uint32_t cub_match_any_8_u32(uint32_t label) {
     uint32_t retval = 0xFFFFFFFFu;
@@ -1172,11 +1324,15 @@ __device__ __forceinline__ uint32_t cub_match_any_8_u32(uint32_t label) {
 
 
 // This is pretty much the same kernel as CUB, just translated and simplified a bit
-template<typename Key_T>
+template<
+    typename Key_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
 struct Radix_Ranker {
 
-    using RT = radix_tuning<Key_T>;
-    using U = get_unsigned_of<Key_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
+    using RTraits = radix_traits<Key_T>;
     static constexpr uint32_t REORDER_WARPS = RT::REORDER_WARPS;
     static constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
     static constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
@@ -1192,7 +1348,7 @@ struct Radix_Ranker {
     template <bool Full_Tile, bool Descending, typename Lookback_Policy>
     static __device__ __forceinline__ void match_early_counts(
         Temp_Storage& temp_storage,
-        U (&keys)[ITEMS_PER_THREAD],
+        typename RTraits::unsigned_of (&keys)[ITEMS_PER_THREAD],
         int (&ranks)[ITEMS_PER_THREAD],
         uint32_t bit_location,
         int& exclusive_digit_prefix,
@@ -1202,15 +1358,15 @@ struct Radix_Ranker {
         uint32_t invalid_items,
         typename Lookback_Policy::T lookback_epoch_bits) {
 
-        const int warp = threadIdx.x / WARP_SIZE;
-        const int lane = lane_id_u32();
-        const int bin_owner = threadIdx.x < RADIX_BIN_SIZE;
+        int warp = (int)threadIdx.x / WARP_SIZE;
+        int lane = lane_id_i32();
+        int bin_owner = (int)threadIdx.x < RADIX_BIN_SIZE;
         uint8_t digits[ITEMS_PER_THREAD];
 
         // read radices
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
-            digits[u] = (uint8_t)extract_byte<U>(keys[u], bit_location);
+            digits[u] = (uint8_t)RTraits::extract_key(keys[u], bit_location);
         }
 
         // init offsets
@@ -1226,12 +1382,12 @@ struct Radix_Ranker {
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             atomicAdd(&warp_offsets[(uint32_t)digits[u]], 1);
         }
+        __syncthreads();
 
         // Block-wide upsweep
-        __syncthreads();
         int bins = 0;
         if (bin_owner) {
-            const int bin = (int)threadIdx.x;
+            int bin = (int)threadIdx.x;
             int* warp_bin_ptr = &temp_storage.warp_offsets[0][bin];
             int* warp_bin_it = warp_bin_ptr;
 
@@ -1281,13 +1437,13 @@ struct Radix_Ranker {
 
         // Per-item rank within the warp/bin
         warp_offsets = &temp_storage.warp_offsets[warp][0];
-        const int lane_mask_le = (int)lane_mask_le_u32();
+        const int lane_mask_le = lane_mask_le_i32();
  
         #pragma unroll
         for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
             uint32_t key_bin = (uint32_t)digits[u];
 
-            int bin_mask = (int)cub_match_any_8_u32(key_bin);
+            int bin_mask = cub_match_any_8_u32(key_bin);
 
             int leader = (WARP_SIZE - 1) - __clz((unsigned)bin_mask);
             int warp_offset = 0;
@@ -1302,13 +1458,267 @@ struct Radix_Ranker {
 };
 
 
+// =============================== Scatter ================================
+    
+template<
+    typename Key_T,
+    typename U,
+    typename Lookback_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
+struct Scatter {
+
+
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
+    using RTraits = radix_traits<Key_T>;
+    using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
+    using Stage_Ind_T = typename RT::Stage_Ind_T;
+
+    static constexpr uint32_t STAGE_PAIRS = RT::sorting_pairs * sizeof(Lookback_T) / sizeof(U);
+    static constexpr uint32_t LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
+    static constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
+    static constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    static constexpr uint32_t REORDER_THREADS = RT::REORDER_THREADS;
+    static constexpr bool SORTING_PAIRS = RT::sorting_pairs;
+
+
+    template<typename T, typename Ind_T, size_t N, enum staging_modes mode>
+    struct conditional_arr; 
+
+    template<typename T, typename Ind_T, size_t N>
+    struct conditional_arr<T, Ind_T, N, staging_modes::disabled> {
+        // empty
+    };
+
+    template<typename T, typename Ind_T, size_t N>
+    struct conditional_arr<T, Ind_T, N, staging_modes::indices> {
+        Ind_T v[N];
+    };
+
+    template<typename T, typename Ind_T, size_t N>
+    struct conditional_arr<T, Ind_T, N, staging_modes::direct> {
+        T v[N];
+    };
+
+
+    // Shared memory struct for main kernel
+#define UNIONIZE_SMEM   1
+    struct alignas(16) SMem {
+
+
+        static constexpr enum staging_modes keys_staging = RT::staging.keys;
+        static constexpr enum staging_modes vals_staging = RT::staging.vals;
+
+
+#if UNIONIZE_SMEM
+        union
+#endif
+        {
+            typename Ranker::Temp_Storage rank_temp;
+            struct {
+                conditional_arr<U, Stage_Ind_T, LOGICAL_BLOCK_SIZE, keys_staging> staged_keys;
+                conditional_arr<Value_T, Stage_Ind_T, LOGICAL_BLOCK_SIZE, vals_staging> staged_vals;
+            };
+        };
+        uint16_t bin_count[RADIX_BIN_SIZE];     
+        Lookback_T bin_offset[RADIX_BIN_SIZE];
+
+
+        // Staging kernels
+        __device__ __forceinline__ void stage_init(
+            const U (&keys)[ITEMS_PER_THREAD],
+            const int (&ranks)[ITEMS_PER_THREAD],
+            int k,
+            Len_T block_base,
+            uint32_t actual_tile_items,
+            size_t src_lane_base = 0,
+            Value_T* __restrict__ in_vals = nullptr
+        ) {
+            [[maybe_unused]] Stage_Ind_T src_local = (Stage_Ind_T)(src_lane_base + (size_t)k * WARP_SIZE);
+
+            // init keys
+            if constexpr (keys_staging == staging_modes::direct) {
+                staged_keys.v[ranks[k]] = keys[k];
+            } else if constexpr (keys_staging == staging_modes::indices) {
+                staged_keys.v[ranks[k]] = src_local;
+            }
+
+            // init vals
+            if constexpr(vals_staging == staging_modes::direct) {
+                if (src_local < actual_tile_items) {
+                    staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
+                }
+            } else if constexpr(vals_staging == staging_modes::indices) {
+                staged_vals.v[ranks[k]] = src_local;
+            }
+        }
+
+
+        template<bool Descending>
+        __device__ __forceinline__ void scatter(
+            const Key_T* __restrict__ in_keys,
+            Key_T* __restrict__ out_keys,
+            Len_T block_base,
+            Len_T idx,
+            uint32_t bit_location,
+            Value_T* __restrict__ out_vals = nullptr,
+            Value_T* __restrict__ in_vals = nullptr
+        ) {
+            // keys
+            U key;
+            if constexpr (keys_staging == staging_modes::direct) {
+                key = staged_keys.v[idx];
+            } else if constexpr (keys_staging == staging_modes::indices) {
+                Stage_Ind_T src_local = staged_keys.v[idx];
+                key = RTraits::twiddle_in<Descending>(in_keys[block_base + (Len_T)src_local]);
+            }
+
+            U digit = RTraits::extract_key(key, bit_location);
+            Len_T ind = idx + (Len_T)bin_offset[digit];
+            out_keys[ind] = RTraits::twiddle_out<Descending>(key);
+
+            // vals
+            if constexpr (vals_staging == staging_modes::direct) {
+                out_vals[ind] = staged_vals.v[idx];
+            } else if constexpr (vals_staging == staging_modes::indices) {
+                out_vals[ind] = in_vals[block_base + staged_vals.v[idx]];
+            } else if constexpr (SORTING_PAIRS) {
+                out_vals[ind] = in_vals[block_base + (Len_T)staged_keys.v[idx]];
+            }
+        }
+
+    };
+
+
+    // scatter kernel with full block support and using simple storaging
+    template<
+        bool Full_Block,
+        bool Descending,
+        typename SMem_T
+    >
+    static __device__ __forceinline__ void scatter_staged(
+        //U* __restrict__ staged,
+        SMem_T* __restrict__ smem,
+        const Key_T* __restrict__ in_keys,
+        const U (&keys)[ITEMS_PER_THREAD],
+        const int (&ranks)[ITEMS_PER_THREAD],
+        //const Lookback_T* __restrict__ bin_offset,
+        Key_T* __restrict__ out_keys,
+        uint32_t actual_tile_items,
+        uint32_t bit_location,
+        Len_T block_base,
+        size_t src_lane_base = 0,
+        Value_T* __restrict__ in_vals = nullptr,
+        Value_T* __restrict__ out_vals = nullptr
+    ) {
+
+
+        // stage in local rank order.
+        // init staging
+        #pragma unroll
+        for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
+            //smem->stage_init(keys, ranks, k, block_base, actual_tile_items, in_vals);
+            smem->stage_init(keys, ranks, k, block_base, actual_tile_items, src_lane_base, in_vals);
+
+        }
+        __syncthreads();
+
+
+        #pragma unroll
+        for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
+            Len_T idx = threadIdx.x + (Len_T)k * REORDER_THREADS;
+
+            if constexpr (Full_Block) {
+                smem->scatter<Descending>(in_keys, out_keys, block_base, idx, bit_location, out_vals, in_vals);
+
+            } else {
+                if (idx < (Len_T)actual_tile_items) {
+                    smem->scatter<Descending>(in_keys, out_keys, block_base, idx, bit_location, out_vals, in_vals);
+
+                }
+            }
+            __syncwarp(0xFFFFFFFFu);
+        }
+    }
+    
+};
+
+/*
+the conditional array struct still declares 1 element.
+to void this, there is the idea of specializing the template
+around the whole staging struct like this:
+
+    struct keys_tag {};
+    struct vals_tag {};
+
+    template<typename Tag, typename T, size_t N, staging_modes Mode>
+    struct staging_field;
+
+    template<typename Tag, typename T, size_t N>
+    struct staging_field<Tag, T, N, staging_modes::disabled> {
+        // empty
+    };
+
+    template<typename Tag, typename T, size_t N>
+    struct staging_field<Tag, T, N, staging_modes::indices> {
+        uint32_t v[N];
+    };
+
+    template<typename Tag, typename T, size_t N>
+    struct staging_field<Tag, T, N, staging_modes::direct> {
+        T v[N];
+    };
+
+Then the staging struct becomes:
+
+    struct stage_storage
+        : staging_field<keys_tag, U, LOGICAL_BLOCK_SIZE, keys_staging>
+        , staging_field<vals_tag, Value_T, LOGICAL_BLOCK_SIZE, vals_staging_>
+    {
+        using keys_base = staging_field<keys_tag, U, LOGICAL_BLOCK_SIZE, keys_staging>;
+
+        using vals_base = staging_field<vals_tag, Value_T, LOGICAL_BLOCK_SIZE, vals_staging_>;
+
+        __device__ __forceinline__ auto* keys() {
+            return keys_base::v;
+        }
+
+        __device__ __forceinline__ auto* vals() {
+            return vals_base::v;
+        }
+    } staged;
+
+
+and we access the elements with smem->staged.keys()[i] and smem->staged.vals()[i]
+However, this was shown to reduce performance slghtly even 
+when caching the pointer before "U* __restrict__ staged_keys = smem->staged.keys();",
+so it was reverted (Not a zero cost abstraction)
+Other than that, Manually specializing templates for all staging modes
+does not seem like good practise.
+*/
+
+
+// ============================ Main Kernels ==============================
+
 // Portable workspace struct for post-sort checks
-template <typename Key_T, typename Lookback_T, typename Len_T>
+template <
+    typename Key_T,
+    typename Lookback_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
 struct Sort_Workspace {
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
+
+
     Len_T num_blocks = 0;
     size_t lb_els = 0;
     size_t total_bytes = 0;
     size_t off_tmp = 0;
+    size_t off_temp_vals = 0;
     size_t off_gp = 0;
     size_t off_counter = 0;
     size_t off_look_partial = 0;
@@ -1316,6 +1726,7 @@ struct Sort_Workspace {
 
     struct View {
         Key_T* tmp = nullptr;
+        Value_T* tmp_vals = nullptr;
         Lookback_T* gp = nullptr;
         uint32_t* counter = nullptr;
         Lookback_T* look_partial = nullptr;
@@ -1325,7 +1736,6 @@ struct Sort_Workspace {
     // build workspace - set memory pointers according to policy 
     template <typename Lookback_Policy>
     static inline Sort_Workspace build(Len_T n) {
-        using RT = radix_tuning<Key_T>;
 
         Sort_Workspace ws;
         ws.num_blocks = div_round_up<Len_T>(n, RT::SORT_BLOCK_SIZE);
@@ -1337,10 +1747,15 @@ struct Sort_Workspace {
         }
 
         size_t off = 0;
-        ws.off_tmp = reserve_aligned(&off, (size_t)n * sizeof(Key_T), 256);
-        ws.off_gp = reserve_aligned(&off, (size_t)RT::RADIX_PASSES * RT::RADIX_BIN_SIZE * sizeof(Lookback_T), 256);
-        ws.off_counter = reserve_aligned(&off, sizeof(uint32_t), 64);
-        ws.off_look_partial = reserve_aligned(&off, ws.lb_els * sizeof(Lookback_T), 256);
+        ws.off_tmp = reserve_aligned<256>(&off, (size_t)n * sizeof(Key_T));
+
+        if constexpr (RT::sorting_pairs) {
+            ws.off_temp_vals = reserve_aligned<256>(&off, (size_t)n * sizeof(Value_T));
+        }
+
+        ws.off_gp = reserve_aligned<256>(&off, (size_t)RT::RADIX_PASSES * RT::RADIX_BIN_SIZE * sizeof(Lookback_T));
+        ws.off_counter = reserve_aligned<64>(&off, sizeof(uint32_t));
+        ws.off_look_partial = reserve_aligned<256>(&off, ws.lb_els * sizeof(Lookback_T));
         ws.total_bytes = off;
         return ws;
     }
@@ -1349,6 +1764,9 @@ struct Sort_Workspace {
     View bind(uint8_t* base) const {
         View view;
         view.tmp = reinterpret_cast<Key_T*>(base + off_tmp);
+        if constexpr (RT::sorting_pairs) {
+            view.tmp_vals = reinterpret_cast<Value_T*>(base + off_temp_vals);
+        }
         view.gp = reinterpret_cast<Lookback_T*>(base + off_gp);
         view.counter = reinterpret_cast<uint32_t*>(base + off_counter);
         view.look_partial = reinterpret_cast<Lookback_T*>(base + off_look_partial);
@@ -1357,45 +1775,19 @@ struct Sort_Workspace {
 };
 
 
-// scatter kernel with full block support and using simple storaging
-template <bool Full_Block, bool Descending, typename Lookback_T, typename Key_T, typename Len_T, typename U>
-__device__ __forceinline__ void scatter_staged(
-    const U* __restrict__ staged,
-    const Lookback_T* __restrict__ bin_offset,
-    Key_T* __restrict__ out_keys,
-    uint32_t actual_tile_items,
-    uint32_t bit_location) {
-
-        
-    using RT = radix_tuning<Key_T>;
-    constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
-    constexpr uint32_t REORDER_THREADS = RT::REORDER_THREADS;
-
-
-    #pragma unroll
-    for (int u = 0; u < ITEMS_PER_THREAD; ++u) {
-        Len_T idx = threadIdx.x + (Len_T)u * REORDER_THREADS;
-        if constexpr (Full_Block) {
-            U key = staged[idx];
-            U digit = extract_byte<U>(key, bit_location);
-            out_keys[idx + (Len_T)bin_offset[digit]] = twiddle_out<Descending, Key_T>(key);
-        } else {
-            if (idx < (Len_T)actual_tile_items) {
-                U key = staged[idx];
-                U digit = extract_byte<U>(key, bit_location);
-                out_keys[idx + (Len_T)bin_offset[digit]] = twiddle_out<Descending, Key_T>(key);
-            }
-        }
-        __syncwarp(0xFFFFFFFFu);
-    }
-}
-
 
 // Non-decoupled lookback path with early partial publication via chained callback
 // The lookback also includes epoch bits to avoid cudamemset on every pass.
 // Standard CUB ranking, implicit full blocking
-template<bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T>
-__global__ __launch_bounds__(radix_tuning<Key_T>::REORDER_THREADS)
+template<
+    bool Descending,
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
+__global__ __launch_bounds__(radix_tuning<Key_T, Value_T, Short_Mode>::REORDER_THREADS)
 void onesweep_byte(
     const Key_T* __restrict__ in_keys,
     Key_T* __restrict__ out_keys,
@@ -1403,36 +1795,35 @@ void onesweep_byte(
     const typename Lookback_Policy::T* __restrict__ gp_sum_buffer,      // [RADIX_PASSES][RADIX_BIN_SIZE]
     volatile typename Lookback_Policy::T* __restrict__ lookback_partial, // [numBlocks * RADIX_BIN_SIZE]
     uint32_t iteration,
-    typename Lookback_Policy::T lookback_epoch_bits) {
+    typename Lookback_Policy::T lookback_epoch_bits,
+    Value_T* __restrict__ in_vals = nullptr,
+    Value_T* __restrict__ out_vals = nullptr
+) {
         
     
     using Lookback_T = typename Lookback_Policy::T;
     using LB = typename Lookback_Policy::conf;
     using U = get_unsigned_of<Key_T>;
-    using Ranker = Radix_Ranker<Key_T>;
-    
-    using RT = radix_tuning<Key_T>;
-    constexpr uint32_t SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
-    constexpr uint32_t LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
-    constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
-    constexpr uint32_t ITEMS_PER_WARP = RT::REORDER_ITEMS_PER_WARP;
-    constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
-    constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
+    using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
+    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T, Short_Mode>;
+
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
+    using RTraits = radix_traits<Key_T>;
+    using Tuning_T = typename RT::Tuning_T;
+    constexpr Tuning_T SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+    constexpr Tuning_T LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
+    constexpr Tuning_T ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    constexpr Tuning_T ITEMS_PER_WARP = RT::REORDER_ITEMS_PER_WARP;
+    constexpr Tuning_T RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
+    constexpr Tuning_T RADIX_BITS = RT::RADIX_BITS;
     
     static_assert(RADIX_BIN_SIZE == 256, "CUB-like kernel expects 8-bit radix.");
 
 
+    __shared__ typename Scatter::SMem smem;
 #if USE_PSUM_SHARED
     __shared__ Lookback_T p_sum[RADIX_BIN_SIZE];
 #endif
-
-    struct SMem {
-        typename Ranker::Temp_Storage rank_temp;
-        uint16_t bin_count[RADIX_BIN_SIZE];
-        Lookback_T bin_offset[RADIX_BIN_SIZE];
-        U staged[LOGICAL_BLOCK_SIZE];
-    };
-    __shared__ SMem smem;
 
     uint32_t block_index = (uint32_t)blockIdx.x;
     const int bin_owner = (int)threadIdx.x < (int)RADIX_BIN_SIZE;
@@ -1445,17 +1836,17 @@ void onesweep_byte(
     uint32_t invalid_items = LOGICAL_BLOCK_SIZE - actual_tile_items;
 
     U keys[ITEMS_PER_THREAD];
-    int ranks[ITEMS_PER_THREAD]; // TODOs: why is this int? 
+    int ranks[ITEMS_PER_THREAD];
 
     int warp = (int)threadIdx.x / WARP_SIZE;
-    int lane = (int)lane_id_u32();
+    int lane = lane_id_i32();
 
     int exclusive_digit_prefix = 0;
     if (full_block) {
         Len_T warp_base = block_base + (Len_T)warp * ITEMS_PER_WARP;
         #pragma unroll
         for (int i = 0; i < ITEMS_PER_THREAD; ++i) {
-            keys[i] = twiddle_in<Descending, Key_T>(in_keys[warp_base + lane + i * WARP_SIZE]);
+            keys[i] = RTraits::twiddle_in<Descending>(in_keys[warp_base + lane + i * WARP_SIZE]);
         }
 
         Ranker::template match_early_counts<true, Descending, Lookback_Policy>(
@@ -1472,19 +1863,16 @@ void onesweep_byte(
         );
 
     } else {
-        //const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
         const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
         #pragma unroll
         for (int i = 0; i < ITEMS_PER_THREAD; ++i) {
             //uint32_t idx = warp_base + lane + i * WARP_SIZE;
             uint64_t idx = warp_base64 + (uint64_t)lane + (uint64_t)i * WARP_SIZE;
             
-            // The filler key must map to the last radix bin in the current order.
-            //keys[i] = twiddle_in<Descending, Key_T>(
-            //    (idx < n) ? in_keys[idx] : tail_filler_key<Descending, Key_T>());
+
             keys[i] = (idx < (uint64_t)n)
-                ? twiddle_in<Descending, Key_T>(in_keys[(Len_T)idx])
-                : tail_filler_bits<Descending, Key_T>();
+                ? RTraits::twiddle_in<Descending>(in_keys[(Len_T)idx])
+                : RTraits::tail_filler_bits();
         }
 
         Ranker::template match_early_counts<false, Descending, Lookback_Policy>(
@@ -1501,7 +1889,7 @@ void onesweep_byte(
         );
 
     }
-    //__syncthreads(); // taken out to not mess with the next 2 __sync's performance
+    //__syncthreads(); // taken out to not mess with the next __sync's performance
 
     Lookback_T p = 0;
     if (bin_owner) {
@@ -1535,21 +1923,34 @@ void onesweep_byte(
     }
     __syncthreads();
 
-    // Stage in local rank order.
-    #pragma unroll
-    for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
-        smem.staged[ranks[k]] = keys[k];
-    }
-    __syncthreads();
 
+    // scattering
+    size_t src_lane_base = (size_t)warp * ITEMS_PER_WARP + (size_t)lane;
     if (full_block) {
-        scatter_staged<true, Descending, Lookback_T, Key_T, Len_T, U>(
-            smem.staged, smem.bin_offset, out_keys, actual_tile_items, bit_location);
+        Scatter::template scatter_staged<true, Descending>(
+            &smem,
+            in_keys,
+            keys, ranks,
+            out_keys,
+            actual_tile_items,
+            bit_location,
+            block_base,
+            src_lane_base,
+            in_vals, out_vals
+        );
     } else {
-        scatter_staged<false, Descending, Lookback_T, Key_T, Len_T, U>(
-            smem.staged, smem.bin_offset, out_keys, actual_tile_items, bit_location);
+        Scatter::template scatter_staged<false, Descending>(
+            &smem,
+            in_keys,
+            keys, ranks,
+            out_keys,
+            actual_tile_items,
+            bit_location,
+            block_base,
+            src_lane_base,
+            in_vals, out_vals
+        );
     }
-    //scatter_staged<false, Descending, Lookback_T, Key_T, Len_T, U>(smem.staged, smem.bin_offset, out_keys, actual_tile_items, bit_location);
 }
 
 
@@ -1589,7 +1990,14 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 
 
 // Enrty point of the sorting kernel
-template <bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T>
+template <
+    bool Descending,
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
 static void onesweep_byte_sort_enqueue(
     cudaStream_t stream,
     Key_T* d_inout,
@@ -1599,7 +2007,10 @@ static void onesweep_byte_sort_enqueue(
     typename Lookback_Policy::T* d_look_partial,
     Len_T n,
     Len_T num_blocks,
-    size_t lb_els) {
+    size_t lb_els,
+    Value_T* d_inout_vals = nullptr,
+    Value_T* d_tmp_vals = nullptr
+) {
 
 
     using LB = typename Lookback_Policy::conf;
@@ -1607,13 +2018,14 @@ static void onesweep_byte_sort_enqueue(
     constexpr bool lb_epoch = Lookback_Policy::epoch;
     constexpr bool lb_reuse = Lookback_Policy::reuse;
 
-    using RT = radix_tuning<Key_T>;
+    using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
     constexpr uint32_t REORDER_THREADS = RT::REORDER_THREADS;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
 
     using H = histogram_tuning;
     constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
+
 
     // conditionally call memsets according to lookback policy
     if constexpr(lb_reuse) {
@@ -1627,8 +2039,10 @@ static void onesweep_byte_sort_enqueue(
         cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, lb_els * sizeof(Lookback_T), stream);
     }
 
-    Key_T* in  = d_inout;
-    Key_T* out = d_tmp;
+    Key_T* in           = d_inout;
+    Key_T* out          = d_tmp;
+    Value_T* in_vals    = d_inout_vals;
+    Value_T* out_vals   = d_tmp_vals;
 
     // Histogram call - template on dynamic work stealing (using lookback type for compile time branching)
     if constexpr (sizeof(Lookback_T) <= sizeof(uint32_t)) {
@@ -1687,13 +2101,20 @@ static void onesweep_byte_sort_enqueue(
         }
 
         // onesweep entry
-        onesweep_byte<Descending, Lookback_Policy>
-        <<<num_blocks, REORDER_THREADS, 0, stream>>>(in, out, n, d_gp, look_partial_pass, it, lb_bits);
+        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode>
+        <<<num_blocks, REORDER_THREADS, 0, stream>>>(
+            in, out, n, d_gp, look_partial_pass, it, lb_bits, in_vals, out_vals
+        );
 
         // ping-pong buffers
         Key_T* tmp = in;
         in = out;
         out = tmp;
+        if constexpr(RT::sorting_pairs) {
+            Value_T* tmp_vals = in_vals;
+            in_vals = out_vals;
+            out_vals = tmp_vals;
+        }
 
         iteration_end();
     }
@@ -1701,28 +2122,40 @@ static void onesweep_byte_sort_enqueue(
     // copy if not in dest (odd number of passes)
     if (in != d_inout) {
         cudaMemcpyAsync(d_inout, in, (size_t)n * sizeof(Key_T), cudaMemcpyDeviceToDevice, stream);
+        if constexpr(RT::sorting_pairs) {
+            cudaMemcpyAsync(d_inout_vals, in_vals, (size_t)n * sizeof(Value_T), cudaMemcpyDeviceToDevice, stream);
+        }
     }
 }
 
 
 // Sorting 
-template <bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T>
+template <
+    bool Descending,
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
 static void onesweep_byte_sort_impl(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace, 
     Len_T n,
-    cudaStream_t stream = 0) {
+    Value_T* d_inout_vals = nullptr,
+    cudaStream_t stream = 0
+) {
 
 
     using LB = typename Lookback_Policy::conf;
     using Lookback_T = typename Lookback_Policy::T;
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T>;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
 
 
     Workspace ws = Workspace::template build<Lookback_Policy>(n);
 
-    // return if just asking for size, like CUB
+    // return if just asking for size
     if (d_workspace == nullptr) {
         *temp_bytes = ws.total_bytes;
         return;
@@ -1730,33 +2163,50 @@ static void onesweep_byte_sort_impl(
 
     // Continue to entry point
     auto view = ws.bind(d_workspace);
-    onesweep_byte_sort_enqueue<Descending, Lookback_Policy, Key_T, Len_T>(
+    onesweep_byte_sort_enqueue<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode>(
         stream, d_inout, view.tmp, view.gp, view.counter,
-        view.look_partial, n, ws.num_blocks, ws.lb_els
+        view.look_partial, n, ws.num_blocks, ws.lb_els, d_inout_vals, view.tmp_vals
     );
 }
 
 
-// Policy swtich
-template<bool Descending, typename Key_T, typename Len_T>
+// Policy swtich (according to array size)
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t
+>
 static inline void looback_policy_enforcer(
-    Key_T* d_inout, size_t* temp_bytes, uint8_t* d_workspace, Len_T n, cudaStream_t stream = 0) {
-    
+    Key_T* d_inout,
+    size_t* temp_bytes,
+    uint8_t* d_workspace,
+    Len_T n,
+    Value_T* d_inout_vals = nullptr,
+    cudaStream_t stream = 0
+) {
+        
+    if (n <= LOW_N) {
+        onesweep_byte_sort_impl<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
+                d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
+        return;
+    }
+
     Lookback_Modes mode = get_lookback_mode(n); // according to array size
 
     // template heavy
     switch(mode) {
         case Lookback_Modes::u32_epoch:
-            onesweep_byte_sort_impl<Descending, Faster_LB_Policy, Key_T, Len_T>(
-                d_inout, temp_bytes, d_workspace, n, stream);
+            onesweep_byte_sort_impl<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
+                d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
             break;
         case Lookback_Modes::u32_plain:
-            onesweep_byte_sort_impl<Descending, Fast_LB_Policy, Key_T, Len_T>(
-                d_inout, temp_bytes, d_workspace, n, stream);
+            onesweep_byte_sort_impl<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
+                d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
             break;
         case Lookback_Modes::u64_epoch:
-            onesweep_byte_sort_impl<Descending, General_LB_Policy, Key_T, Len_T>(
-                d_inout, temp_bytes, d_workspace, n, stream);
+            onesweep_byte_sort_impl<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
+                d_inout, temp_bytes, d_workspace, n, d_inout_vals, stream);
             break;
         default:
             break;
@@ -1767,12 +2217,25 @@ static inline void looback_policy_enforcer(
 // Wrap for the sorting call:
 // Builds the CUDA graph for the sort if defined
 // Performance gains are not significant 
-template<bool Descending, typename Key_T, typename Len_T>
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t
+>
 static inline void onesweep_byte_sort_wrap(
-    Key_T* d_inout, size_t* temp_bytes, uint8_t* d_workspace, Len_T n) {
-    cudaStream_t capture_stream = nullptr;
-#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
-    if (d_workspace != nullptr) {
+    Key_T* d_inout,
+    size_t* temp_bytes,
+    uint8_t* d_workspace,
+    Len_T n,
+    Value_T* d_inout_vals = nullptr,
+    cudaStream_t capture_stream = nullptr
+) {
+
+    static_assert(std::is_integral_v<Len_T>, "Type of N (Len_T) must be an integral type");
+
+    //#if USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT
+    if ((d_workspace != nullptr) && USE_CUDA_GRAPH_SORT && !EXIT_EARLY_OPT) {
         cudaGraph_t graph = nullptr;
         cudaGraphExec_t exec = nullptr;
         cudaStream_t stream = 0;
@@ -1780,7 +2243,9 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamCreateWithFlags(&capture_stream, cudaStreamNonBlocking);
 
         cudaStreamBeginCapture(capture_stream, cudaStreamCaptureModeGlobal);
-        looback_policy_enforcer<Descending, Key_T, Len_T>(d_inout, temp_bytes, d_workspace, n, capture_stream);
+        looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
+            d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
+        );
         cudaStreamEndCapture(capture_stream, &graph);
 
         cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0);
@@ -1790,40 +2255,131 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamDestroy(capture_stream);
         return;
     }
-#endif
-    looback_policy_enforcer<Descending, Key_T, Len_T>(d_inout, temp_bytes, d_workspace, n, capture_stream);
+
+    looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
+        d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
+    );
 }
 
+
+// ============================== Public API Interfaces ==============================
 
 // onesweep_byte_sort_wrap<false, Key_T, Len_T>(d_inout, temp_bytes, d_workspace, n);
 // however, size_t is faster in benchmarking
 template<typename Key_T, typename Len_T>
 static inline void onesweep_byte_sort(
-    Key_T* d_inout, size_t* temp_bytes, uint8_t* d_workspace, Len_T n) {
-    onesweep_byte_sort_wrap<false, Key_T, size_t>(d_inout, temp_bytes, d_workspace, n);
+    Key_T* d_inout,
+    size_t* temp_bytes,
+    uint8_t* d_workspace,
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
+) {
+    
+    onesweep_byte_sort_wrap<false, Key_T, size_t, no_value_t>(
+        d_inout,
+        temp_bytes,
+        d_workspace,
+        n,
+        nullptr,
+        capture_stream
+    );
 }
 
 
 template<typename Key_T, typename Len_T>
 static inline void onesweep_byte_sort_descending(
-    Key_T* d_inout, size_t* temp_bytes, uint8_t* d_workspace, Len_T n) {
-    onesweep_byte_sort_wrap<true, Key_T, size_t>(d_inout, temp_bytes, d_workspace, n);
+    Key_T* d_inout,
+    size_t* temp_bytes,
+    uint8_t* d_workspace,
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
+) {
+    
+    onesweep_byte_sort_wrap<true, Key_T, size_t, no_value_t>(
+        d_inout,
+        temp_bytes,
+        d_workspace,
+        n,
+        nullptr,
+        capture_stream
+    );
 }
 
 
+template<typename Key_T, typename Len_T, typename Value_T>
+static inline void onesweep_byte_sort_pairs(
+    Key_T* d_inout,
+    Value_T* d_inout_values,
+    size_t* temp_bytes,
+    uint8_t* d_workspace,
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
+) {
+    
+    onesweep_byte_sort_wrap<false, Key_T, size_t, Value_T>(
+        d_inout,
+        temp_bytes,
+        d_workspace,
+        n,
+        d_inout_values,
+        capture_stream
+    );
+}
+
+
+template<typename Key_T, typename Len_T, typename Value_T>
+static inline void onesweep_byte_sort_pairs_descending(
+    Key_T* d_inout,
+    Value_T* d_inout_values,
+    size_t* temp_bytes,
+    uint8_t* d_workspace,
+    Len_T n,
+    cudaStream_t capture_stream = nullptr
+) {
+    
+    onesweep_byte_sort_wrap<true, Key_T, size_t, Value_T>(
+        d_inout,
+        temp_bytes, 
+        d_workspace,
+        n,
+        d_inout_values,
+        capture_stream
+    );
+}
+
+
+/*
+    Note:
+
+    It would be interesting to have an API for AoS input
+    and do the conversion to SoA automatically. But will
+    have to wait for reflection to get to NVCC I guess.
+*/
+
+
+// ========================= Benchmark Kernels ============================
+
 // Reconstructs the digit histogram for the last pass and checks count of each radix
 // in the sorted array to assert if sorted output has the same counts.
-template <bool Descending, typename Lookback_Policy, typename Key_T, typename Len_T>
+template <
+    bool Descending,
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Short_Mode = false
+>
 static bool verify_digit_histograms_preserved(
     const Key_T* d_sorted,
     uint8_t* d_workspace,
     Len_T n,
     uint32_t seed,
-    Array_Modes arr_mode) {
+    Array_Modes arr_mode
+) {
 
 
     using Lookback_T = typename Lookback_Policy::T;
-    using RT = radix_tuning<Key_T>;
+    using RT = radix_tuning<Key_T, Value_T>;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
@@ -1842,7 +2398,7 @@ static bool verify_digit_histograms_preserved(
     CHECK_CUDA(cudaMalloc(&d_hist_chk, HIST_ELEMS * sizeof(Lookback_T)));
     CHECK_CUDA(cudaMalloc(&d_counter, sizeof(uint32_t)));
 
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T>;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
     Workspace ws = Workspace::template build<Lookback_Policy>(n);
     auto workspace_view = ws.bind(d_workspace);
 
@@ -1862,6 +2418,7 @@ static bool verify_digit_histograms_preserved(
 
     CHECK_CUDA(cudaMemcpy(h_hist_ref, d_hist_ref, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_hist_chk, d_hist_chk, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost));
+
 
     CHECK_CUDA(cudaFree(d_counter));
     CHECK_CUDA(cudaFree(d_hist_chk));
@@ -1893,8 +2450,9 @@ static bool verify_digit_histograms_preserved(
 }
 
 
+// TODOs: rewrite this
 // Verify histogram according to mode
-template <bool Descending, typename Key_T, typename Len_T>
+template <bool Descending, typename Key_T, typename Len_T, typename Value_T = no_value_t>
 static bool verify_hist_by_mode(
     Lookback_Modes mode,
     Array_Modes arr_mode,
@@ -1903,15 +2461,20 @@ static bool verify_hist_by_mode(
     Len_T n,
     uint32_t seed)  {
 
+    if (n <= LOW_N) {
+        return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
+            d_keys, d_workspace, n, seed, arr_mode);
+    }
+
     switch (mode) {
         case Lookback_Modes::u32_epoch:
-            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T>(
+            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_keys, d_workspace, n, seed, arr_mode);
         case Lookback_Modes::u32_plain:
-            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T>(
+            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_keys, d_workspace, n, seed, arr_mode);
         case Lookback_Modes::u64_epoch:
-            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T>(
+            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
                 d_keys, d_workspace, n, seed, arr_mode);
     }
     return false;
@@ -1919,35 +2482,82 @@ static bool verify_hist_by_mode(
 
 
 // Benchmarking function (entry point of the sort)
-template<bool Descending, typename T, typename Len_T>
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t
+>
 int benchmark(
     Len_T n,
     uint32_t iters,
     uint32_t warmups,
     uint32_t warm_ms,
     Array_Modes arr_mode,
-    bool validation = false) {
+    bool validation = false
+) {
 
-
-    using RT = radix_tuning<T>;
+    using ull_t = long long unsigned int;
+    uint32_t SORT_BLOCK_SIZE;
+    uint32_t REORDER_THREADS;
+    uint32_t REORDER_ITEMS_PER_THREAD;
+    using RT_default = radix_tuning<Key_T, Value_T>;
+    if (n <= LOW_N) {
+        using RT = radix_tuning<Key_T, Value_T, true>;
+        SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+        REORDER_THREADS = RT::REORDER_THREADS;
+        REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    } else {
+        using RT = radix_tuning<Key_T, Value_T, false>;
+        SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+        REORDER_THREADS = RT::REORDER_THREADS;
+        REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+    }
+    static constexpr uint32_t RADIX_BITS = RT_default::RADIX_BITS;
+    static constexpr bool SORTING_PAIRS = RT_default::sorting_pairs;
 
 
     // initialization
     size_t temp_bytes = 0;
-    T* d_keys = nullptr;
+    Key_T* d_keys = nullptr;
+    [[maybe_unused]] Value_T* d_vals = nullptr;
     uint8_t* d_workspace = nullptr;
+    
 
     auto launch_sorting_kernel = [&]() {
-        if constexpr (Descending) {
-            onesweep_byte_sort_descending<T>(d_keys, &temp_bytes, d_workspace, n);
+
+        if constexpr (SORTING_PAIRS) {
+            if constexpr (Descending) {
+                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+            } else {
+                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+            }
         } else {
-            onesweep_byte_sort<T>(d_keys, &temp_bytes, d_workspace, n);
+            if constexpr (Descending) {
+                onesweep_byte_sort_descending<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+            } else {
+                onesweep_byte_sort<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+            }
         }
+
     };
 
+    
     // do not time memory allocations
-    CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
+    CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
+    if constexpr (SORTING_PAIRS) {
+        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n))); // 
+    }
     launch_sorting_kernel();
+    if (BENCH_DEBUG) {
+        printf(
+            "n: %llu, key size: %llu, val size: %llu, temp_bytes requested: %llu\n",
+            (ull_t)n,
+            (ull_t)sizeof(Key_T) * n,
+            (ull_t)(SORTING_PAIRS ? align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) : 0), 
+            (ull_t)temp_bytes
+        );
+    }
     CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
     CHECK_CUDA(cudaGetLastError());
 
@@ -1958,7 +2568,15 @@ int benchmark(
 
     // define sorting iteration
     auto run_timed_iteration = [&](uint32_t seed) {
-        init_keys<T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(d_keys, n, seed, arr_mode);
+        init_keys<Key_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(d_keys, n, seed, arr_mode);
+        if constexpr (SORTING_PAIRS) {
+            init_keys<uint32_t, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
+                (uint32_t *)d_vals,
+                align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) / sizeof(uint32_t),
+                seed,
+                arr_mode
+            );
+        }
         CHECK_CUDA(cudaGetLastError());
 
         cudaEventRecord(start);
@@ -2002,9 +2620,12 @@ int benchmark(
     cudaGetDevice(&device);
     cudaGetDeviceProperties(&prop, device);
 
-    std::string_view sv_temp = type_name<T>();
+
+    std::string_view sv_temp = type_name<Key_T>();
+    std::string_view svt_temp = type_name<Value_T>();
     if (!validation) {
-        printf("\nGPU: %s\n"
+        printf(
+            "\nGPU: %s\n"
             "\nRADIX\t=\t%d\n"
             "N\t=\t%llu\n"
             "Type\t=\t%.*s\n"
@@ -2017,22 +2638,25 @@ int benchmark(
             "it/s\t=\t%lld\n"
             "ps/el\t=\t%.3f\n"
             "Mode\t=\t%s\n"
-            "Order\t=\t%s\n",
+            "Order\t=\t%s\n"
+            "Pairs\t=\t%.*s\n",
 
             prop.name,
-            RT::RADIX_BITS,
-            (long long unsigned int)n,
+            RADIX_BITS,
+            (ull_t)n,
             (int)sv_temp.size(), sv_temp.data(),
-            (uint32_t)div_round_up<Len_T>(n, RT::SORT_BLOCK_SIZE),
-            RT::REORDER_THREADS,
-            RT::REORDER_ITEMS_PER_THREAD,
+            (uint32_t)div_round_up<Len_T>(n, SORT_BLOCK_SIZE),
+            REORDER_THREADS,
+            REORDER_ITEMS_PER_THREAD,
             (double)temp_bytes / (1024. * 1024.),
             ms_avg, us_std,
             iters, warmups_done,
             els,
             psel,
             arr_modes_to_string(arr_mode),
-            Descending ? "DESC" : "ASC"
+            Descending ? "DESC" : "ASC",
+            SORTING_PAIRS ? (int)svt_temp.size() : 2,
+            SORTING_PAIRS ? svt_temp.data() : "No"
         );
     }
     
@@ -2050,7 +2674,7 @@ int benchmark(
     CHECK_CUDA(cudaMemcpy(d_ok, &temp, sizeof(int), cudaMemcpyHostToDevice));
 
     Len_T check_blocks = div_round_up<Len_T>(n, 256);
-    check_sorted<Descending, T><<<check_blocks, 256>>>(d_keys, n, d_ok);
+    check_sorted<Descending, Key_T><<<check_blocks, 256>>>(d_keys, n, d_ok);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -2068,11 +2692,12 @@ int benchmark(
     // check histograms 
     uint32_t last_seed = (uint32_t)(set_seed_radix(seed_counter - 1));
     bool hist_ok = false;
+
     if (Descending) {
-        hist_ok = verify_hist_by_mode<true, T>(
+        hist_ok = verify_hist_by_mode<true, Key_T, Len_T, Value_T>(
             mode, arr_mode, d_keys, d_workspace, n, last_seed);
     } else {
-        hist_ok = verify_hist_by_mode<false, T>(
+        hist_ok = verify_hist_by_mode<false, Key_T, Len_T, Value_T>(
             mode, arr_mode, d_keys, d_workspace, n, last_seed);
     }
 
@@ -2080,9 +2705,18 @@ int benchmark(
     if (!validation) {
         printf("digit counts ok? %s\n", hist_ok ? "YES" : "NO");
     } else {
-        printf("Sorting %llu els of type %.*s (%s), %s array - %.3f ms (%d avg + %d wm)... %s\n",
-            (long long unsigned int)n,
+        std::string pair_str = "Pair: " + std::string(svt_temp) + ",";
+        printf(
+            "Sorting %llu els "
+            "of type %.*s, %.*s (%.3f MB)"
+            "(%s), %s array - %.3f ms"
+            "(%d avg + %d wm)... %s\n",
+
+            (ull_t)n,
             (int)sv_temp.size(), sv_temp.data(),
+            SORTING_PAIRS ? (int)pair_str.size() : 0,
+            SORTING_PAIRS ? pair_str.data() : "",
+            (double)temp_bytes / (1024. * 1024.),
             Descending ? "DESC" : "ASC",
             arr_modes_to_string(arr_mode),
             ms_avg, iters, warmups_done,
@@ -2096,19 +2730,33 @@ int benchmark(
     CHECK_CUDA(cudaEventDestroy(stop));
     CHECK_CUDA(cudaFree(d_workspace));
     CHECK_CUDA(cudaFree(d_keys));
+    if constexpr (SORTING_PAIRS) {
+        CHECK_CUDA(cudaFree(d_vals));
+    }
 
     return bench_valid;
 }
 
+
+// ========================= Validation Kernels ===========================
 
 // in ms 
 #define COOL_BETWEEN_RUNS   0.0
 
 template<typename... Ts> struct type_list {};
 
+// Types to validate (keys)
 using radix_test_types = type_list<
 #if VALIDATION_TEST
     TYPE_SET_TEST
+#endif
+>;
+
+// Validate different sized values for each key type
+using kv_types = type_list<
+    no_value_t,
+#if PAIR_VALIDATION
+    UINT_TYPES
 #endif
 >;
 
@@ -2135,7 +2783,7 @@ struct Validation_Result {
 
 
 // Benchmark entry point of the validation
-template<typename T>
+template<typename Key_T, typename Value_T = no_value_t>
 Validation_Result validate_radix_type(
     bool descending,
     int iter,
@@ -2144,7 +2792,9 @@ Validation_Result validate_radix_type(
     uint32_t vram_gb) {
 
     Validation_Result result;
-    uint32_t bit_end = radix_type_traits<T>::max_array_bits(vram_gb);
+    constexpr bool sorting_pairs = !std::is_same_v<Value_T, no_value_t>;
+    uint32_t size_el = sizeof(Key_T) + (sorting_pairs ? sizeof(Value_T) : 0); 
+    uint32_t bit_end = max_array_bits(vram_gb, size_el);
     uint32_t bit_start = bit_end - 10;
 
     for (int i = (int)bit_start; i <= (int)bit_end; ++i) {
@@ -2152,19 +2802,25 @@ Validation_Result validate_radix_type(
         uint64_t n = 1ull << i;
         int pass_ok;
         if (descending) {
-            pass_ok = benchmark<true, T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<true, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         } else {
-            pass_ok = benchmark<false, T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<false, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         }
         result.add(pass_ok);
 
         if (!pass_ok) {
-            std::string_view sv = type_name<T>();
-            printf("Failed test with: n = 2^%d, Order = %s, mode = %s, type = %.*s\n",
+            std::string_view sv = type_name<Key_T>();
+            std::string_view svt_temp = type_name<Value_T>();
+            std::string pair_str = "Pair: " + std::string(svt_temp);
+
+            printf(
+                "Failed test with: n = 2^%d, Order = %s, mode = %s, type = %.*s, %.*s\n",
                 i,
                 descending ? "DESC" : "ASC",
                 arr_modes_to_string(mode),
-                (int)sv.size(), sv.data()
+                (int)sv.size(), sv.data(),
+                sorting_pairs ? (int)pair_str.size() : 0,
+                sorting_pairs ? pair_str.data() : ""
             );
         }
 
@@ -2175,8 +2831,29 @@ Validation_Result validate_radix_type(
 }
 
 
+template<typename Key_T, typename Value_List>
+struct validate_kv_pair_list;
+
+template<typename Key_T, typename... Value_Ts>
+struct validate_kv_pair_list<Key_T, type_list<Value_Ts...>> {
+    static Validation_Result run(
+        bool descending,
+        int iter,
+        int warm,
+        Array_Modes mode,
+        uint32_t vram_gb)
+    {
+        Validation_Result total;
+        (total.merge(
+            validate_radix_type<Key_T, Value_Ts>(descending, iter, warm, mode, vram_gb)
+        ), ...);
+        return total;
+    }
+};
+
+
 // Validate accoring to list of types
-template<typename... Ts>
+template<typename... Key_Ts>
 Validation_Result validate_radix_wrap(
     bool desc,
     int iter,
@@ -2185,22 +2862,24 @@ Validation_Result validate_radix_wrap(
 
     Validation_Result total;
 
-    if constexpr (sizeof...(Ts) > 0) {
+    if constexpr (sizeof...(Key_Ts) > 0) {
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, 0);
-        uint64_t vram_bytes = prop.totalGlobalMem;
-        uint32_t vram_gb = vram_bytes >> 30;
+        uint32_t vram_gb = prop.totalGlobalMem >> 30;
 
         (total.merge(
-                validate_radix_type<Ts>(false, iter, warm, mode, vram_gb)
-            ), ...
-        );
+            validate_kv_pair_list<Key_Ts, kv_types>::run(
+                false, iter, warm, mode, vram_gb
+            )
+        ), ...);
         if (desc) {
             (total.merge(
-                    validate_radix_type<Ts>(true, iter, warm, mode, vram_gb)
-                ), ...
-            );
+                validate_kv_pair_list<Key_Ts, kv_types>::run(
+                    true, iter, warm, mode, vram_gb
+                )
+            ), ...);
         }
+
     }
 
     return total;
@@ -2240,5 +2919,5 @@ bool validate(bool all_modes, bool desc, int iter, int warm) {
     return total.all_passed();
 }
 
-
 } // namespace rsort
+

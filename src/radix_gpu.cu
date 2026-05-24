@@ -1,11 +1,21 @@
-// Compile:
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
+/*
+    Validation suite was run both in Windows (MSVC) and Linux (gcc)
+        Linux: 3168/3168 tests passed (signed and unsigned 128-bit integers)
+        Windows: 2200/2200 tests passed
+    Compilation tested with both -std=c++17 and -std=c++20 standards
+    Validation is template HEAVY! Only enable if you want to run validation.
 
-/* 
+    Compile:
+        nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
+    Example: 
+        ./radix_gpu --n 10000000 --iterations 30
+    Validation:
+        ./radix_gpu --validation --iterations 1 --warmup 0
+
     TODOs:
-    - change C-style pointers to C++ style
-    - add suport for long doubles
-    - key pair types
+    - Change C-style pointers to C++ style
+    - Add suport for long doubles
+    - AoS API (when nvcc gets reflection)
 */
 
 
@@ -19,7 +29,7 @@
 #include "benchmark_sort.cuh"
 #include "bench_parser.h"
 
-// Validation is template HEAVY! Only enable if you want to run validation.
+// vvv HEAVY! Only enable if you want to run validation.
 #define VALIDATION_TEST     0
 #include "validate_sort.cuh"
 
@@ -38,7 +48,7 @@ int main(int argc, char** argv) {
 
     // Benchmark example
     if (!conf.validation) {
-        bool ret = rsort::benchmark<false, uint32_t, size_t>(
+        bool ret = rsort::benchmark<false, uint8_t, size_t>(
             conf.n,
             conf.iterations,
             conf.warmups,
