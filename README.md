@@ -347,7 +347,7 @@ Checklist of standardization efforts for all releases from version v0.2.0 onward
 
 ## Notes and Disclaimers
 
-- This implementation is not intended to be production-ready (in its current state). It is a proof of concept and is not a drop-in replacement for CUB.
+- While extensively tested and benchmarked, rsort has arguably not yet received the level of platform coverage, validation, long-term maintenance and overall battle tested'ness expected of a production library.
 - For convenience, a monolithic single-header version is provided in [monolithic/rsort.cuh](monolithic/rsort.cuh). The main implementation remains split across files for readability. This monolithic version might not be up to date with development!
 - The implementation was tested on a single GPU (mine). Cross-device results may vary.
 - The optimizations explored here are, to the best of my knowledge, not widely documented in existing GPU radix sort literature, hence this project.
