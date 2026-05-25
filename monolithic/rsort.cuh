@@ -45,7 +45,7 @@
 // ============================== User knobs ==============================
 
 // (check validation types below)
-#define VALIDATION_TEST                 1
+#define VALIDATION_TEST                 0
 #define PAIR_VALIDATION                 1
 #define U128_BIT_VALIDATION             1
 
