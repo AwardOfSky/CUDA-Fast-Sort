@@ -215,8 +215,8 @@ For 32-bit keys, rsort is faster across all tested array sizes, from 2<sup>20</s
 It's interesting to note the drop in throughput from 2<sup>28</sup> elements onwards for rsort, as it coincides with the policy change that disables epoch bits in the lookback path. Surprisingly, rsort still leads by around 2% with epoch bits turned off.  For 32 bits, rsort uses 21 items per thread and 384 threads per block, which, as far as I can tell, is the same CTA geometry CUB uses for this scenario in sm_86. Rsort pipeline being optimized for an 8-bit radix onesweep makes a strong case against CUB's more general policies, at least for high-throughput scenarios. Lookback epoch bits seem to provide the largest relative advantage for smaller arrays.
 
 <p align="center">
-  <img src="graphs/scaling_uint32_t.png" width="48%" />
-  <img src="graphs/scaling_uint64_t.png" width="48%" />
+  <img src="graphs/scaling_uint32_t.png" width="49%" />
+  <img src="graphs/scaling_uint64_t.png" width="49%" />
 </p>
 
 For 64-bit keys, the story changes slightly. CUB starts behind by a more modest margin for smaller arrays (mainly sizes 2<sup>21</sup> and 2<sup>22</sup>), but the margin widens in favor of rsort for larger arrays. rsort uses 448 threads per block and 6 items per thread to sort 64-bit keys; changing the policy to match CUB's geometry seems to yield very similar results. Changing other knobs in Rsort's reorder and lookback policy does not seem to move performance significantly either. Eventually, rsort reaches a 5.4% performance gain with a peak throughput of around 6B el/s, before falling to a 4.5% gain when turning off the lookback epoch policy, at an array size of 2<sup>28</sup>. CUB's throughput peaks at around 5.69B el/s.
@@ -224,8 +224,8 @@ For 64-bit keys, the story changes slightly. CUB starts behind by a more modest 
 Overall, standard deviations seem to be tighter for rsort across most sizes, although for 64-bit keys, CUB seems to present less jitter on average (check [benchmark_data](graphs/benchmark_data.py)). Worth noting that, in my testing, even using an average of 30 runs along with a hefty warmup configuration, standard deviation still varies significantly from run to run, so it is better to focus on the global picture and not read too much into specific values.
 
 <p align="center">
-  <img src="graphs/scaling_uint8_t.png" width="48%" />
-  <img src="graphs/scaling_uint16_t.png" width="48%" />
+  <img src="graphs/scaling_uint8_t.png" width="49%" />
+  <img src="graphs/scaling_uint16_t.png" width="49%" />
 </p>
 
 For 8 and 16 bits, rsort wins more clearly all around. The CTA geometry used by rsort for both cases is the same as for 32 bits. As far as I could tell, CUB does not use onesweep for keys smaller than 32 bits on sm_86, and the radix is also smaller than 8 bits. I'm not sure of the reasons behind this choice. Perhaps memory management, although looking at memory consumption, the two algorithms do not seem significantly different. Still, this means these two graphs are not comparing implementations of the same algorithm at all anymore.
@@ -245,7 +245,7 @@ Indirect staging adds extra work, so it usually has a performance cost. However,
 In practice, keys are almost always staged directly. Values are staged directly by default, and only staged indirectly when the combined size of the key and value is large enough that direct staging becomes too expensive.
 
 <p align="center">
-  <img src="graphs/kv_pairs_uint32_n27.png" width="55%" />
+  <img src="graphs/kv_pairs_uint32_n27.png" width="65%" />
 </p>
 
 The graph shows the results of sorting a combination of 32 and 64-bit keys and values, in rsort and CUB, for an array size of 2<sup>27</sup>.
@@ -260,7 +260,7 @@ The largest improvement is observed when sorting 64-bit keys paired with 64-bit 
 These benchmarks were carried out in _steady-state_ with significant warmup. This means the code caches and paths are pre-loaded and hot. Even though this is typically how most performance benchmarks are performed (especially for GPUs), there is value in testing algorithmic performance on more realistic conditions. A user calling a sort algorithm is most likely to do some other work after with the sorted output, possibly even outside the GPU. The above bar graph shows the results of running both states, again for an unsigned 32-bit array of size 2<sup>27</sup>. The _cold-state_ consists of 1 single run with no warmup of any kind. Results still correspond to an average of 30 runs performed individually and spaced out in time sufficiently to cool the GPU.
 
 <p align="center">
-  <img src="graphs/cold_vs_steady_uint32_n27.png" width="55%" />
+  <img src="graphs/cold_vs_steady_uint32_n27.png" width="65%" />
 </p>
 
 In this experiment, CUB achieves a throughput of 21.7B el/s on _steady-state_ vs. 21.5B el/ for  _cold-state_, corresponding to a performance drop of around 1%. In turn, rsort manages 22.4B el/s for _steady-state_ vs 22.2B el/s on _cold-state_, which translates to a 0.9% drop. This corresponds to an advantage of around 3.2% for rsort in _steady-state_ and 3.3% in _cold-state_. 
@@ -272,7 +272,7 @@ Standard deviations are just slightly tighter for rsort in both states. However,
 For this experiment, we are again using _steady-state_ with 32-bit arrays of 2<sup>27</sup> elements. Here, instead of randomly initializing the entire value, only every other byte is randomly initialized, the remaining ones being filled with the same patterns for all keys. This scenario is beneficial for rsort's early-exiting approach, as 2 of the bytes will be marked for skipping. However, CUB's CTA-level short-circuiting should also fast-forward the work of every block that handles the constant-valued bytes to the scatter stage for copying. The idea is to make both mechanisms trigger half of the time in order to compare speedups. Besides, many real-world applications tag bit information in a specific location or bytes of the data (_i.e._ the lookback mechanism of both these algorithms, for instance), making this scenario not so far-fetched.
 
 <p align="center">
-  <img src="graphs/byte_skip_uint32_n27.png" width="55%" />
+  <img src="graphs/byte_skip_uint32_n27.png" width="65%" />
 </p>
 
 Results show a throughput increase from 21.7B to 22.1B el/s (+1.6%) for CUB when switching from random to byte-skipped arrays. This was somewhat surprising to profile, as I assumed the work skipped would be much closer to 50%. Still, not performing any GPU work for 2 of the 4 bytes should have rsort decrease timings to about half, giving it an advantage. Indeed, results show that rsort's throughput jumps to about 40.4B el/s when sorting byte-skipped arrays in this scenario.
@@ -285,12 +285,12 @@ I think it is worth noting that the comparison between these mechanisms should n
 
 ### 128-bit results
 
-This scenario consists of a preliminary experiment for sorting 128-bit arrays (again, unsigned keys, _steady-state_). Ultimately, this should be a scaling graph like the first four, but to avoid cluttering this benchmarking section and sparing my poor GPU of further torture, let's stick with the sizes with the highest potential for peak throughput that fit in GPU VRAM and don't OOM.
+This scenario consists of a preliminary experiment for sorting 128-bit arrays (again, unsigned keys, _steady-state_). Ultimately, this should be a scaling graph like the first four, but to avoid cluttering this benchmarking section and sparing my poor GPU of further torture, let's stick with the sizes with the highest potential for peak throughput that fit in GPU VRAM, not causing OOM errors.
 For array sizes of 2<sup>26</sup> elements, rsort achieves a throughput of around 1.49B el/s when compared to CUB's 1.46B el/s, representing a speedup of around 2.1%.
 For N = 2<sup>27</sup>, rsort's throughput remains roughly the same, while CUB's decreases slightly to 1.45B el/s, translating to a speedup of 2.3%.
 
 <p align="center">
-  <img src="graphs/benchmark_128bit.png" width="55%" />
+  <img src="graphs/benchmark_128bit.png" width="65%" />
 </p>
 
 <!--
