@@ -12,6 +12,12 @@
     #include <time.h>
 #endif
 
+#if defined(_MSC_VER)
+  #define RSORT_FORCEINLINE __forceinline
+#else
+  #define RSORT_FORCEINLINE __inline__ __attribute__((__always_inline__))
+#endif
+
 #define WARP_SIZE       32
 static_assert(WARP_SIZE == 32, "This code assumes 32-lane NVIDIA hardware warps");
 
@@ -60,12 +66,12 @@ static inline size_t reserve_aligned(size_t* off, size_t bytes) {
 
 
 // Linux needs these wrappers for 64-bit counters
-__device__ __forceinline__ uint32_t atomic_add_wrap(uint32_t* ptr, uint32_t val) {
+__device__ RSORT_FORCEINLINE uint32_t atomic_add_wrap(uint32_t* ptr, uint32_t val) {
     return atomicAdd(ptr, val);
 }
 
 
-__device__ __forceinline__ uint64_t atomic_add_wrap(uint64_t* ptr, uint64_t val) {
+__device__ RSORT_FORCEINLINE uint64_t atomic_add_wrap(uint64_t* ptr, uint64_t val) {
     return (uint64_t)atomicAdd(
         reinterpret_cast<unsigned long long int*>(ptr),
         (unsigned long long int)val
@@ -74,33 +80,33 @@ __device__ __forceinline__ uint64_t atomic_add_wrap(uint64_t* ptr, uint64_t val)
 
 
 template<uint32_t Limit>
-__device__ __forceinline__ int active_thread_limit(uint32_t x) {
+__device__ RSORT_FORCEINLINE int active_thread_limit(uint32_t x) {
     uint32_t base = (threadIdx.x < Limit) ? x : 0u;
     return base;
 }
 
 
-__device__ __forceinline__ uint32_t lane_id_i32() {
+__device__ RSORT_FORCEINLINE uint32_t lane_id_i32() {
     int x;
     asm volatile("mov.u32 %0, %%laneid;" : "=r"(x));
     return x;
 }
 
 
-__device__ __forceinline__ uint32_t lane_mask_le_i32() {
+__device__ RSORT_FORCEINLINE uint32_t lane_mask_le_i32() {
     int x;
     asm volatile("mov.u32 %0, %%lanemask_le;" : "=r"(x));
     return x;
 }
 
 
-__device__ __host__ __forceinline__ uint32_t div_round_up_u32(uint32_t v, uint32_t d) {
+__device__ __host__ RSORT_FORCEINLINE uint32_t div_round_up_u32(uint32_t v, uint32_t d) {
     return v / d + ((v % d) != 0); // overflow safe
 }
 
 
 template<typename T>
-__device__ __host__ __forceinline__ T div_round_up(T v, T d) {
+__device__ __host__ RSORT_FORCEINLINE T div_round_up(T v, T d) {
     return v / d + ((v % d) != 0); // overflow safe
 }
 
@@ -203,7 +209,7 @@ constexpr const char* arr_modes_to_string(Array_Modes mode) {
 
 
 #define RNG_AVALANCHE_MIX    1
-__host__ __device__ __forceinline__ uint32_t mix32(uint32_t x) {
+__host__ __device__ RSORT_FORCEINLINE uint32_t mix32(uint32_t x) {
     
 #if RNG_AVALANCHE_MIX
     x ^= x >> 16;

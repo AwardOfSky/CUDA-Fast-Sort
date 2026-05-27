@@ -326,16 +326,16 @@ template <
 >
 static void onesweep_byte_sort_enqueue(
     cudaStream_t stream,
-    Key_T* d_inout,
-    Key_T* d_tmp,
-    typename Lookback_Policy::T* d_gp,
+    Key_T* __restrict__ d_inout,
+    Key_T* __restrict__ d_tmp,
+    typename Lookback_Policy::T* __restrict__ d_gp,
     uint32_t* d_counter,
-    typename Lookback_Policy::T* d_look_partial,
+    typename Lookback_Policy::T* __restrict__ d_look_partial,
     Len_T n,
     Len_T num_blocks,
     size_t lb_els,
-    Value_T* d_inout_vals = nullptr,
-    Value_T* d_tmp_vals = nullptr
+    Value_T* __restrict__ d_inout_vals = nullptr,
+    Value_T* __restrict__ d_tmp_vals = nullptr
 ) {
 
 
@@ -465,11 +465,11 @@ template <
     bool Short_Mode = false
 >
 static void onesweep_byte_sort_impl(
-    Key_T* d_inout,
+    Key_T* __restrict__ d_inout,
     size_t* temp_bytes,
-    uint8_t* d_workspace, 
+    uint8_t* __restrict__ d_workspace, 
     Len_T n,
-    Value_T* d_inout_vals = nullptr,
+    Value_T* __restrict__ d_inout_vals = nullptr,
     cudaStream_t stream = 0
 ) {
 

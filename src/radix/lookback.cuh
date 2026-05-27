@@ -165,7 +165,7 @@ struct Lookback {
 
 
     // packing functions, always pack epoch bits along with publish state
-    static __device__ __forceinline__ T pack_global(T val, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE T pack_global(T val, T epoch_bits) {
         if constexpr(Epoch) {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK | epoch_bits;
         } else {
@@ -173,7 +173,7 @@ struct Lookback {
         }
     }
 
-    static __device__ __forceinline__ T pack_partial(T val, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE T pack_partial(T val, T epoch_bits) {
         if constexpr(Epoch) {
             return (val & LB::VALUE_MASK) | LB::PARTIAL_MASK | epoch_bits;
         } else {
@@ -184,7 +184,7 @@ struct Lookback {
 
     // Rule #1 of high performance programming:
     // the more underscores your code has the faster it goes
-    static __device__ __host__ __forceinline__ T pack_epoch(uint32_t epoch) {
+    static __device__ __host__ RSORT_FORCEINLINE T pack_epoch(uint32_t epoch) {
         if constexpr(Epoch) {
             using LB = Lookback_Config<T, Epoch>;
             return ((T)epoch & LB::EPOCH_VALUE_MASK) << LB::EPOCH_SHIFT;
@@ -196,7 +196,7 @@ struct Lookback {
 
     // Note: No need to check for 0 if using Epoch bits because
     // lookback will be EPOCH_TAG filled for the first pass (and on epoch wrap)
-    static __device__ __forceinline__ bool invalid_lookback_state(T raw, T lb) {
+    static __device__ RSORT_FORCEINLINE bool invalid_lookback_state(T raw, T lb) {
         if constexpr(Epoch) {
             //return ((raw & LB::EPOCH_MASK) != lb) || (raw == 0u);
             return (raw & LB::EPOCH_MASK) != lb;
@@ -207,7 +207,7 @@ struct Lookback {
 
 
     // standard exponential backoff strategy
-    static __device__ __forceinline__ void nano_wait(T* raw, const volatile T* ptr, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE void nano_wait(T* raw, const volatile T* ptr, T epoch_bits) {
 #if LOOKBACK_USE_NANOSLEEP_BACKOFF && (__CUDA_ARCH__ >= 700)
         if (invalid_lookback_state(*raw, epoch_bits)) {
             uint32_t backoff = LOOKBACK_NANOSLEEP_INITIAL;
@@ -226,7 +226,7 @@ struct Lookback {
 
 
     // helpers
-    static __device__ __forceinline__ void wait_valid_lookback_state(T* raw, const volatile T* ptr, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE void wait_valid_lookback_state(T* raw, const volatile T* ptr, T epoch_bits) {
         do {
             *raw = *ptr;
             nano_wait(raw, ptr, epoch_bits);
@@ -234,7 +234,7 @@ struct Lookback {
     }
 
 
-    static __device__ __forceinline__ bool valid_global_lookback_state(T raw, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE bool valid_global_lookback_state(T raw, T epoch_bits) {
         if constexpr(Epoch) {
             return ((raw & LB::GLOBAL_MASK) != 0) && ((raw & LB::EPOCH_MASK) == epoch_bits) && (raw != 0);
         } else {
@@ -245,7 +245,7 @@ struct Lookback {
 
     // Main lookback function, decoupled, partial publishing
     // less branching (more register pressure?)
-    static __device__ __forceinline__ typename Policy::T lookback_prefix(
+    static __device__ RSORT_FORCEINLINE typename Policy::T lookback_prefix(
         const volatile typename Policy::T* __restrict__ lookback_bin,
         uint32_t block_index,
         typename Policy::T lb_epoch_bits) {
@@ -293,7 +293,7 @@ struct Lookback {
     // old version of the lookback:
     // seems to be slightly worse in most cases because of the extra branch,
     // but it's mostly codegen. Still, worth testing in new configurations 
-    static __device__ __forceinline__ typename Policy::T lookback_prefix_old(
+    static __device__ RSORT_FORCEINLINE typename Policy::T lookback_prefix_old(
         const volatile typename Policy::T* __restrict__ lookback_bin,
         uint32_t block_index,
         uint32_t b,

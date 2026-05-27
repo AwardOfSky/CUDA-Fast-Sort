@@ -99,6 +99,12 @@
 
 // ========================================================================
 
+#if defined(_MSC_VER)
+  #define RSORT_FORCEINLINE __forceinline
+#else
+  #define RSORT_FORCEINLINE __inline__ __attribute__((__always_inline__))
+#endif
+
 #define WARP_SIZE       32
 static_assert(WARP_SIZE == 32, "This code assumes 32-lane NVIDIA hardware warps");
 
@@ -363,7 +369,7 @@ struct radix_traits {
 
     
     // unsigned and type T bit convertion (for twiddling)  
-    static __device__ __forceinline__ T bits_to_type(unsigned_of x) {
+    static __device__ RSORT_FORCEINLINE T bits_to_type(unsigned_of x) {
         if constexpr(std::is_same_v<T, float>) {
             return __uint_as_float(x);
         } else if constexpr (std::is_same_v<T, double>) {
@@ -374,7 +380,7 @@ struct radix_traits {
     }
 
 
-    static __device__ __forceinline__ unsigned_of type_to_bits(T x) {
+    static __device__ RSORT_FORCEINLINE unsigned_of type_to_bits(T x) {
         if constexpr(std::is_same_v<T, float>) {
             return __float_as_uint(x);
         } else if constexpr(std::is_same_v<T, double>) {
@@ -387,7 +393,7 @@ struct radix_traits {
 
     // twiddling kernels
     template <bool Descending>
-    static __host__ __device__ __forceinline__ unsigned_of twiddle_in(T x) {
+    static __host__ __device__ RSORT_FORCEINLINE unsigned_of twiddle_in(T x) {
         using U = unsigned_of;
 
         U bits = type_to_bits(x);
@@ -406,7 +412,7 @@ struct radix_traits {
 
 
     template<bool Descending>
-    static __host__ __device__ __forceinline__ T twiddle_out(unsigned_of bits) {
+    static __host__ __device__ RSORT_FORCEINLINE T twiddle_out(unsigned_of bits) {
         if constexpr (Descending) {
             bits = ~bits;
         }
@@ -423,14 +429,14 @@ struct radix_traits {
 
     
     // Filler for partial blocks
-    static __host__ __device__ __forceinline__ constexpr unsigned_of tail_filler_bits() {
+    static __host__ __device__ RSORT_FORCEINLINE constexpr unsigned_of tail_filler_bits() {
         return ~unsigned_of{0};
     }
 
 
     // Key extractor
     //template<bool Descending>
-    static __device__ __forceinline__ uint32_t extract_key(unsigned_of x, unsigned_of bit) {
+    static __device__ RSORT_FORCEINLINE uint32_t extract_key(unsigned_of x, unsigned_of bit) {
         //if constexpr (Descending) x = ~x;
         return (x >> bit) & radix_consts::RADIX_MASK;
     }
@@ -488,12 +494,12 @@ static inline size_t reserve_aligned(size_t* off, size_t bytes) {
 
 
 // Linux needs these wrappers for 64-bit counters
-__device__ __forceinline__ uint32_t atomic_add_wrap(uint32_t* ptr, uint32_t val) {
+__device__ RSORT_FORCEINLINE uint32_t atomic_add_wrap(uint32_t* ptr, uint32_t val) {
     return atomicAdd(ptr, val);
 }
 
 
-__device__ __forceinline__ uint64_t atomic_add_wrap(uint64_t* ptr, uint64_t val) {
+__device__ RSORT_FORCEINLINE uint64_t atomic_add_wrap(uint64_t* ptr, uint64_t val) {
     return (uint64_t)atomicAdd(
         reinterpret_cast<unsigned long long int*>(ptr),
         (unsigned long long int)val
@@ -502,33 +508,33 @@ __device__ __forceinline__ uint64_t atomic_add_wrap(uint64_t* ptr, uint64_t val)
 
 
 template<uint32_t Limit>
-__device__ __forceinline__ int active_thread_limit(uint32_t x) {
+__device__ RSORT_FORCEINLINE int active_thread_limit(uint32_t x) {
     uint32_t base = (threadIdx.x < Limit) ? x : 0u;
     return base;
 }
 
 
-__device__ __forceinline__ uint32_t lane_id_i32() {
+__device__ RSORT_FORCEINLINE uint32_t lane_id_i32() {
     int x;
     asm volatile("mov.u32 %0, %%laneid;" : "=r"(x));
     return x;
 }
 
 
-__device__ __forceinline__ uint32_t lane_mask_le_i32() {
+__device__ RSORT_FORCEINLINE uint32_t lane_mask_le_i32() {
     int x;
     asm volatile("mov.u32 %0, %%lanemask_le;" : "=r"(x));
     return x;
 }
 
 
-__device__ __host__ __forceinline__ uint32_t div_round_up_u32(uint32_t v, uint32_t d) {
+__device__ __host__ RSORT_FORCEINLINE uint32_t div_round_up_u32(uint32_t v, uint32_t d) {
     return v / d + ((v % d) != 0); // overflow safe
 }
 
 
 template<typename T>
-__device__ __host__ __forceinline__ T div_round_up(T v, T d) {
+__device__ __host__ RSORT_FORCEINLINE T div_round_up(T v, T d) {
     return v / d + ((v % d) != 0); // overflow safe
 }
 
@@ -631,7 +637,7 @@ constexpr const char* arr_modes_to_string(Array_Modes mode) {
 
 
 #define RNG_AVALANCHE_MIX    1
-__host__ __device__ __forceinline__ uint32_t mix32(uint32_t x) {
+__host__ __device__ RSORT_FORCEINLINE uint32_t mix32(uint32_t x) {
     
 #if RNG_AVALANCHE_MIX
     x ^= x >> 16;
@@ -787,7 +793,7 @@ struct histogram_tuning {
 
 // simple block-wide exclusive scan for nElement <= blockDim.x
 template <typename T>
-__device__ __forceinline__ T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
+__device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
     bool active = (int)threadIdx.x < n_element;
     T value = active ? s_mem[threadIdx.x] : 0;
     T x = value;
@@ -817,7 +823,7 @@ __device__ __forceinline__ T scan_exclusive_block(T prefix, T* s_mem, int n_elem
 
 
 // Block exclusive scan specialized for 256 threads (8 warps).
-__device__ __forceinline__ uint32_t block_exclusive_scan_256(
+__device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
     uint32_t x,
     uint32_t* warp_sums) {
     
@@ -1122,7 +1128,7 @@ struct Lookback {
 
 
     // packing functions, always pack epoch bits along with publish state
-    static __device__ __forceinline__ T pack_global(T val, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE T pack_global(T val, T epoch_bits) {
         if constexpr(Epoch) {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK | epoch_bits;
         } else {
@@ -1130,7 +1136,7 @@ struct Lookback {
         }
     }
 
-    static __device__ __forceinline__ T pack_partial(T val, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE T pack_partial(T val, T epoch_bits) {
         if constexpr(Epoch) {
             return (val & LB::VALUE_MASK) | LB::PARTIAL_MASK | epoch_bits;
         } else {
@@ -1141,7 +1147,7 @@ struct Lookback {
 
     // Rule #1 of high performance programming:
     // the more underscores your code has the faster it goes
-    static __device__ __host__ __forceinline__ T pack_epoch(uint32_t epoch) {
+    static __device__ __host__ RSORT_FORCEINLINE T pack_epoch(uint32_t epoch) {
         if constexpr(Epoch) {
             using LB = Lookback_Config<T, Epoch>;
             return ((T)epoch & LB::EPOCH_VALUE_MASK) << LB::EPOCH_SHIFT;
@@ -1153,7 +1159,7 @@ struct Lookback {
 
     // Note: No need to check for 0 if using Epoch bits because
     // lookback will be EPOCH_TAG filled for the first pass (and on epoch wrap)
-    static __device__ __forceinline__ bool invalid_lookback_state(T raw, T lb) {
+    static __device__ RSORT_FORCEINLINE bool invalid_lookback_state(T raw, T lb) {
         if constexpr(Epoch) {
             //return ((raw & LB::EPOCH_MASK) != lb) || (raw == 0u);
             return (raw & LB::EPOCH_MASK) != lb;
@@ -1164,7 +1170,7 @@ struct Lookback {
 
 
     // standard exponential backoff strategy
-    static __device__ __forceinline__ void nano_wait(T* raw, const volatile T* ptr, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE void nano_wait(T* raw, const volatile T* ptr, T epoch_bits) {
 #if LOOKBACK_USE_NANOSLEEP_BACKOFF && (__CUDA_ARCH__ >= 700)
         if (invalid_lookback_state(*raw, epoch_bits)) {
             uint32_t backoff = LOOKBACK_NANOSLEEP_INITIAL;
@@ -1183,7 +1189,7 @@ struct Lookback {
 
 
     // helpers
-    static __device__ __forceinline__ void wait_valid_lookback_state(T* raw, const volatile T* ptr, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE void wait_valid_lookback_state(T* raw, const volatile T* ptr, T epoch_bits) {
         do {
             *raw = *ptr;
             nano_wait(raw, ptr, epoch_bits);
@@ -1191,7 +1197,7 @@ struct Lookback {
     }
 
 
-    static __device__ __forceinline__ bool valid_global_lookback_state(T raw, T epoch_bits) {
+    static __device__ RSORT_FORCEINLINE bool valid_global_lookback_state(T raw, T epoch_bits) {
         if constexpr(Epoch) {
             return ((raw & LB::GLOBAL_MASK) != 0) && ((raw & LB::EPOCH_MASK) == epoch_bits) && (raw != 0);
         } else {
@@ -1202,7 +1208,7 @@ struct Lookback {
 
     // Main lookback function, decoupled, partial publishing
     // less branching (more register pressure?)
-    static __device__ __forceinline__ typename Policy::T lookback_prefix(
+    static __device__ RSORT_FORCEINLINE typename Policy::T lookback_prefix(
         const volatile typename Policy::T* __restrict__ lookback_bin,
         uint32_t block_index,
         typename Policy::T lb_epoch_bits) {
@@ -1250,7 +1256,7 @@ struct Lookback {
     // old version of the lookback:
     // seems to be slightly worse in most cases because of the extra branch,
     // but it's mostly codegen. Still, worth testing in new configurations 
-    static __device__ __forceinline__ typename Policy::T lookback_prefix_old(
+    static __device__ RSORT_FORCEINLINE typename Policy::T lookback_prefix_old(
         const volatile typename Policy::T* __restrict__ lookback_bin,
         uint32_t block_index,
         uint32_t b,
@@ -1299,7 +1305,7 @@ struct Lookback {
 // ================================ Ranker ================================
 
 // Same as in CUB header but with no ternary operator (retval at 0xFFFFFFFFu)
-__device__ __forceinline__ uint32_t cub_match_any_8_u32(uint32_t label) {
+__device__ RSORT_FORCEINLINE uint32_t cub_match_any_8_u32(uint32_t label) {
     uint32_t retval = 0xFFFFFFFFu;
     //uint32_t retval = 0u;
     #pragma unroll
@@ -1346,7 +1352,7 @@ struct Radix_Ranker {
     };
 
     template <bool Full_Tile, bool Descending, typename Lookback_Policy>
-    static __device__ __forceinline__ void match_early_counts(
+    static __device__ RSORT_FORCEINLINE void match_early_counts(
         Temp_Storage& temp_storage,
         typename RTraits::unsigned_of (&keys)[ITEMS_PER_THREAD],
         int (&ranks)[ITEMS_PER_THREAD],
@@ -1527,7 +1533,7 @@ struct Scatter {
 
 
         // Staging kernels
-        __device__ __forceinline__ void stage_init(
+        __device__ RSORT_FORCEINLINE void stage_init(
             const U (&keys)[ITEMS_PER_THREAD],
             const int (&ranks)[ITEMS_PER_THREAD],
             int k,
@@ -1557,7 +1563,7 @@ struct Scatter {
 
 
         template<bool Descending>
-        __device__ __forceinline__ void scatter(
+        __device__ RSORT_FORCEINLINE void scatter(
             const Key_T* __restrict__ in_keys,
             Key_T* __restrict__ out_keys,
             Len_T block_base,
@@ -1598,7 +1604,7 @@ struct Scatter {
         bool Descending,
         typename SMem_T
     >
-    static __device__ __forceinline__ void scatter_staged(
+    static __device__ RSORT_FORCEINLINE void scatter_staged(
         //U* __restrict__ staged,
         SMem_T* __restrict__ smem,
         const Key_T* __restrict__ in_keys,
@@ -1681,11 +1687,11 @@ Then the staging struct becomes:
 
         using vals_base = staging_field<vals_tag, Value_T, LOGICAL_BLOCK_SIZE, vals_staging_>;
 
-        __device__ __forceinline__ auto* keys() {
+        __device__ RSORT_FORCEINLINE auto* keys() {
             return keys_base::v;
         }
 
-        __device__ __forceinline__ auto* vals() {
+        __device__ RSORT_FORCEINLINE auto* vals() {
             return vals_base::v;
         }
     } staged;

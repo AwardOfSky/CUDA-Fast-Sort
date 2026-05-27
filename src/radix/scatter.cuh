@@ -76,14 +76,15 @@ struct Scatter {
             struct {
                 conditional_arr<U, Stage_Ind_T, LOGICAL_BLOCK_SIZE, keys_staging> staged_keys;
                 conditional_arr<Value_T, Stage_Ind_T, LOGICAL_BLOCK_SIZE, vals_staging> staged_vals;
+                uint16_t bin_count[RADIX_BIN_SIZE];     
+                Lookback_T bin_offset[RADIX_BIN_SIZE];
+            
             };
         };
-        uint16_t bin_count[RADIX_BIN_SIZE];     
-        Lookback_T bin_offset[RADIX_BIN_SIZE];
 
 
         // Staging kernels
-        __device__ __forceinline__ void stage_init(
+        __device__ RSORT_FORCEINLINE void stage_init(
             const U (&keys)[ITEMS_PER_THREAD],
             const int (&ranks)[ITEMS_PER_THREAD],
             int k,
@@ -113,7 +114,7 @@ struct Scatter {
 
 
         template<bool Descending>
-        __device__ __forceinline__ void scatter(
+        __device__ RSORT_FORCEINLINE void scatter(
             const Key_T* __restrict__ in_keys,
             Key_T* __restrict__ out_keys,
             Len_T block_base,
@@ -154,7 +155,7 @@ struct Scatter {
         bool Descending,
         typename SMem_T
     >
-    static __device__ __forceinline__ void scatter_staged(
+    static __device__ RSORT_FORCEINLINE void scatter_staged(
         //U* __restrict__ staged,
         SMem_T* __restrict__ smem,
         const Key_T* __restrict__ in_keys,
@@ -240,11 +241,11 @@ Then the staging struct becomes:
 
         using vals_base = staging_field<vals_tag, Value_T, LOGICAL_BLOCK_SIZE, vals_staging_>;
 
-        __device__ __forceinline__ auto* keys() {
+        __device__ RSORT_FORCEINLINE auto* keys() {
             return keys_base::v;
         }
 
-        __device__ __forceinline__ auto* vals() {
+        __device__ RSORT_FORCEINLINE auto* vals() {
             return vals_base::v;
         }
     } staged;

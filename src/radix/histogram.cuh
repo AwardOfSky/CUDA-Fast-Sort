@@ -29,7 +29,7 @@ struct histogram_tuning {
 
 // simple block-wide exclusive scan for nElement <= blockDim.x
 template <typename T>
-__device__ __forceinline__ T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
+__device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
     bool active = (int)threadIdx.x < n_element;
     T value = active ? s_mem[threadIdx.x] : 0;
     T x = value;
@@ -59,7 +59,7 @@ __device__ __forceinline__ T scan_exclusive_block(T prefix, T* s_mem, int n_elem
 
 
 // Block exclusive scan specialized for 256 threads (8 warps).
-__device__ __forceinline__ uint32_t block_exclusive_scan_256(
+__device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
     uint32_t x,
     uint32_t* warp_sums) {
     

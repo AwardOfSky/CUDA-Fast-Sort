@@ -275,7 +275,7 @@ struct radix_traits {
 
     
     // unsigned and type T bit convertion (for twiddling)  
-    static __device__ __forceinline__ T bits_to_type(unsigned_of x) {
+    static __device__ RSORT_FORCEINLINE T bits_to_type(unsigned_of x) {
         if constexpr(std::is_same_v<T, float>) {
             return __uint_as_float(x);
         } else if constexpr (std::is_same_v<T, double>) {
@@ -286,7 +286,7 @@ struct radix_traits {
     }
 
 
-    static __device__ __forceinline__ unsigned_of type_to_bits(T x) {
+    static __device__ RSORT_FORCEINLINE unsigned_of type_to_bits(T x) {
         if constexpr(std::is_same_v<T, float>) {
             return __float_as_uint(x);
         } else if constexpr(std::is_same_v<T, double>) {
@@ -299,7 +299,7 @@ struct radix_traits {
 
     // twiddling kernels
     template <bool Descending>
-    static __host__ __device__ __forceinline__ unsigned_of twiddle_in(T x) {
+    static __host__ __device__ RSORT_FORCEINLINE unsigned_of twiddle_in(T x) {
         using U = unsigned_of;
 
         U bits = type_to_bits(x);
@@ -318,7 +318,7 @@ struct radix_traits {
 
 
     template<bool Descending>
-    static __host__ __device__ __forceinline__ T twiddle_out(unsigned_of bits) {
+    static __host__ __device__ RSORT_FORCEINLINE T twiddle_out(unsigned_of bits) {
         if constexpr (Descending) {
             bits = ~bits;
         }
@@ -335,14 +335,14 @@ struct radix_traits {
 
     
     // Filler for partial blocks
-    static __host__ __device__ __forceinline__ constexpr unsigned_of tail_filler_bits() {
+    static __host__ __device__ RSORT_FORCEINLINE constexpr unsigned_of tail_filler_bits() {
         return ~unsigned_of{0};
     }
 
 
     // Key extractor
     //template<bool Descending>
-    static __device__ __forceinline__ uint32_t extract_key(unsigned_of x, unsigned_of bit) {
+    static __device__ RSORT_FORCEINLINE uint32_t extract_key(unsigned_of x, unsigned_of bit) {
         //if constexpr (Descending) x = ~x;
         return (x >> bit) & radix_consts::RADIX_MASK;
     }

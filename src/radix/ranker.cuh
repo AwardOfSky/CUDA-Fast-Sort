@@ -11,7 +11,7 @@
 namespace rsort {
 
 // Same as in CUB header but with no ternary operator (retval at 0xFFFFFFFFu)
-__device__ __forceinline__ uint32_t cub_match_any_8_u32(uint32_t label) {
+__device__ RSORT_FORCEINLINE uint32_t cub_match_any_8_u32(uint32_t label) {
     uint32_t retval = 0xFFFFFFFFu;
     //uint32_t retval = 0u;
     #pragma unroll
@@ -58,14 +58,14 @@ struct Radix_Ranker {
     };
 
     template <bool Full_Tile, bool Descending, typename Lookback_Policy>
-    static __device__ __forceinline__ void match_early_counts(
+    static __device__ RSORT_FORCEINLINE void match_early_counts(
         Temp_Storage& temp_storage,
         typename RTraits::unsigned_of (&keys)[ITEMS_PER_THREAD],
         int (&ranks)[ITEMS_PER_THREAD],
         uint32_t bit_location,
         int& exclusive_digit_prefix,
-        uint16_t* bin_count,
-        volatile typename Lookback_Policy::T* lookBack_partial,
+        uint16_t* __restrict__ bin_count,
+        volatile typename Lookback_Policy::T* __restrict__ lookBack_partial,
         uint32_t block_index,
         uint32_t invalid_items,
         typename Lookback_Policy::T lookback_epoch_bits) {
