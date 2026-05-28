@@ -12,21 +12,9 @@ As it stands, this project serves both as a re-implementation and as a proof of 
 
 Validation tests and benchmarks are included to corroborate correctness and performance against CUB, but the primary focus of the project remains on expressing the algorithms and optimizations implemented, as well as their trade-offs.
 
-
-## Overview
-
-The implementation is largely based on CUB's DeviceRadixSort:
-
-- Stable
-- 8-bit radix
-- A priori global histogram counts
-- Onesweep design (per pass: read once, write once)
-- Coupled lookback chain with early publication and epoch bits
-- Warp-level design
-
-Therefore, many of the componenets are, effectively, a simplified translation of these techniques/principles.
-
 ## Key Features
+
+The implementation is based on CUB's DeviceRadixSort. It is stable, using a 8-bit radix with an onesweep design (per pass: read once, write once) and *a priori* global histogram counts. The lookback uses the classic coupled lookback chain with early publication and the addition of epoch bits.
 
 ### The algorithm currently implements:
 
@@ -34,12 +22,15 @@ Therefore, many of the componenets are, effectively, a simplified translation of
 - "semi"-arbitrary array sizes <sup>2</sup>
 - Ascend/descend
 - Key-value pair sorting
-- Support for 128-bit keys
+- Support for 128-bit keys <sup>3</sup>
 
 <sup>1</sup> Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
 This is the same idea CUB uses. Support for descending sorting is achieved using the same principle: by simply inverting the bit representation during reordering.
 
 <sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurt performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even at 32 bits.
+
+<sup>3</sup> Except for long doubles (not supported by CUDA)
+
 
 ### Assumptions and missing features (different from CUB):
 
