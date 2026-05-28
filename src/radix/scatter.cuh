@@ -76,13 +76,12 @@ struct Scatter {
             struct {
                 conditional_arr<U, Stage_Ind_T, LOGICAL_BLOCK_SIZE, keys_staging> staged_keys;
                 conditional_arr<Value_T, Stage_Ind_T, LOGICAL_BLOCK_SIZE, vals_staging> staged_vals;
-                uint16_t bin_count[RADIX_BIN_SIZE];     
-                Lookback_T bin_offset[RADIX_BIN_SIZE];
-            
             };
         };
-
-
+        uint16_t bin_count[RADIX_BIN_SIZE];     
+        Lookback_T bin_offset[RADIX_BIN_SIZE];
+          
+        
         // Staging kernels
         __device__ RSORT_FORCEINLINE void stage_init(
             const U (&keys)[ITEMS_PER_THREAD],
