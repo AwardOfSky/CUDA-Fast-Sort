@@ -19,19 +19,23 @@ namespace rsort {
 template <
     bool Descending,
     typename Lookback_Policy,
-    typename Key_T,
+    typename Key_T_tentative,
     typename Len_T,
     typename Value_T = no_value_t,
     bool Short_Mode = false
 >
-static bool verify_digit_histograms_preserved(
-    const Key_T* d_sorted,
+static bool verify_digit_histograms(
+    Key_T_tentative* d_sorted_keys,
     uint8_t* d_workspace,
     Len_T n,
     uint32_t seed,
     Array_Modes arr_mode
 ) {
 
+    // CUDA doesn't support long doubles
+    constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T_tentative>();
+    using Key_T = native_128bit_support::try_valid_long_double_t<Key_T_tentative>;
+    Key_T* d_sorted = reinterpret_cast<Key_T*>(d_sorted_keys);
 
     using Lookback_T = typename Lookback_Policy::T;
     using RT = radix_tuning<Key_T, Value_T>;
@@ -59,20 +63,26 @@ static bool verify_digit_histograms_preserved(
 
     CHECK_CUDA(cudaMemset(d_hist_ref, 0, HIST_ELEMS * sizeof(Lookback_T)));
     CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
-    init_keys<Key_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(workspace_view.tmp, n, seed, arr_mode);
+    init_keys<Key_T, Len_T, is_ld><<<div_round_up<Len_T>(n, 256), 256>>>(
+        workspace_view.tmp, n, seed, arr_mode
+    );
     CHECK_CUDA(cudaGetLastError());
-    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T>
+    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld>
     <<<HIST_BLOCKS, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
     CHECK_CUDA(cudaGetLastError());
 
     CHECK_CUDA(cudaMemset(d_hist_chk, 0, HIST_ELEMS * sizeof(Lookback_T)));
     CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
-    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T>
+    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld>
     <<<HIST_BLOCKS, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
     CHECK_CUDA(cudaGetLastError());
 
-    CHECK_CUDA(cudaMemcpy(h_hist_ref, d_hist_ref, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_hist_chk, d_hist_chk, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(
+        h_hist_ref, d_hist_ref, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost)
+    );
+    CHECK_CUDA(cudaMemcpy(
+        h_hist_chk, d_hist_chk, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost)
+    );
 
 
     CHECK_CUDA(cudaFree(d_counter));
@@ -107,30 +117,40 @@ static bool verify_digit_histograms_preserved(
 
 // TODOs: rewrite this
 // Verify histogram according to mode
-template <bool Descending, typename Key_T, typename Len_T, typename Value_T = no_value_t>
+template <
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t
+
+>
 static bool verify_hist_by_mode(
     Lookback_Modes mode,
     Array_Modes arr_mode,
-    const Key_T* d_keys,
+    Key_T* d_keys,
     uint8_t* d_workspace,
     Len_T n,
     uint32_t seed)  {
 
     if (n <= LOW_N) {
-        return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
-            d_keys, d_workspace, n, seed, arr_mode);
+        return verify_digit_histograms<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
+            d_keys, d_workspace, n, seed, arr_mode
+        );
     }
 
     switch (mode) {
         case Lookback_Modes::u32_epoch:
-            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
-                d_keys, d_workspace, n, seed, arr_mode);
+            return verify_digit_histograms<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
+                    d_keys, d_workspace, n, seed, arr_mode
+            );
         case Lookback_Modes::u32_plain:
-            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
-                d_keys, d_workspace, n, seed, arr_mode);
+            return verify_digit_histograms<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
+                d_keys, d_workspace, n, seed, arr_mode
+            );
         case Lookback_Modes::u64_epoch:
-            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
-                d_keys, d_workspace, n, seed, arr_mode);
+            return verify_digit_histograms<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
+                d_keys, d_workspace, n, seed, arr_mode
+            );
     }
     return false;
 }
@@ -183,15 +203,23 @@ int benchmark(
 
         if constexpr (SORTING_PAIRS) {
             if constexpr (Descending) {
-                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(
+                    d_keys, d_vals, &temp_bytes, d_workspace, n
+                );
             } else {
-                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(
+                    d_keys, d_vals, &temp_bytes, d_workspace, n
+                );
             }
         } else {
             if constexpr (Descending) {
-                onesweep_byte_sort_descending<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort_descending<Key_T, Len_T>(
+                    d_keys, &temp_bytes, d_workspace, n
+                );
             } else {
-                onesweep_byte_sort<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort<Key_T, Len_T>(
+                    d_keys, &temp_bytes, d_workspace, n
+                );
             }
         }
 
@@ -201,7 +229,10 @@ int benchmark(
     // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
     if constexpr (SORTING_PAIRS) {
-        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n))); // 
+        CHECK_CUDA(cudaMalloc(
+            &d_vals,
+            align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n)
+        ));
     }
     launch_sorting_kernel();
     if (BENCH_DEBUG) {
@@ -221,12 +252,21 @@ int benchmark(
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
+    using Key_T_Sort = native_128bit_support::try_valid_long_double_t<Key_T>;
+    constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T>();
+    Key_T_Sort* d_keys_sort = reinterpret_cast<Key_T_Sort*>(d_keys);
+
     // define sorting iteration
     auto run_timed_iteration = [&](uint32_t seed) {
-        init_keys<Key_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(d_keys, n, seed, arr_mode);
+        
+        init_keys<Key_T_Sort, Len_T, is_ld><<<div_round_up<Len_T>(n, 256), 256>>>(
+            d_keys_sort, n, seed, arr_mode
+        );
         if constexpr (SORTING_PAIRS) {
+            uint32_t* d_vals_sort = reinterpret_cast<uint32_t*>(d_vals);
+
             init_keys<uint32_t, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
-                (uint32_t *)d_vals,
+                d_vals_sort,
                 align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) / sizeof(uint32_t),
                 seed,
                 arr_mode
@@ -276,7 +316,10 @@ int benchmark(
     cudaGetDeviceProperties(&prop, device);
 
 
-    std::string_view sv_temp = type_name<Key_T>();
+    std::string sv_temp = std::string(type_name<Key_T>());
+    if constexpr (std::is_same_v<Key_T, long double>) {
+        sv_temp += " (" + std::to_string(sizeof(Key_T) * 8) + " bits)";
+    }
     std::string_view svt_temp = type_name<Value_T>();
     if (!validation) {
         printf(
@@ -329,7 +372,7 @@ int benchmark(
     CHECK_CUDA(cudaMemcpy(d_ok, &temp, sizeof(int), cudaMemcpyHostToDevice));
 
     Len_T check_blocks = div_round_up<Len_T>(n, 256);
-    check_sorted<Descending, Key_T><<<check_blocks, 256>>>(d_keys, n, d_ok);
+    check_sorted<Descending, Key_T_Sort, is_ld><<<check_blocks, 256>>>(d_keys_sort, n, d_ok);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);

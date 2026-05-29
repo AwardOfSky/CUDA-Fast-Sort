@@ -69,7 +69,7 @@ struct radix_tuning : radix_consts {
     // our size budget per element (128 bits for now), in which case we revert
     // to index staging.
     //
-    // Both staging modes can be overwritten
+    // Both staging modes can be overridden
     //
     // Notes:
     // - Key Staging can't be disabled
@@ -227,22 +227,61 @@ struct radix_tuning : radix_consts {
 };
 
 
-template<typename T>
-struct radix_traits {
+struct native_128bit_support {
 
-    // 128 bit support (for integer types in GCC and Clang)
+// 128 bit support (for integer types in GCC and Clang)
 #if defined(__SIZEOF_INT128__)
     using native_u128 = unsigned __int128;
     using native_i128 = __int128;
     static constexpr bool has_native_u128 = true;
 #else
-    using native_u128 = uint64_t;
-    using native_i128 = int64_t;
+    using native_u128 = no_value_t;
+    using native_i128 = no_value_t;
     static constexpr bool has_native_u128 = false;
 #endif
-    static constexpr bool type_is_valid_128 = 
-        std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
 
+    // always returns false in CUDA code
+    template <typename T>
+    static constexpr bool is_valid_long_double() {
+    
+        constexpr bool IS_LONG_DOUBLE = std::is_same_v<T, long double>;
+        static_assert(
+            !IS_LONG_DOUBLE ||
+            (sizeof(long double) == 16) ||
+            (sizeof(long double) == 8),
+            "Sorting long doubles expects 64 or 128 bits."
+        );
+        // if long double is 64-bit, there is no need for any of this...
+        // (sizeof(long double) == 16) acts as: 
+        // are we calling this from CUDA or host code?
+        constexpr bool is_ld = IS_LONG_DOUBLE && (sizeof(long double) == 16);
+
+        return is_ld;
+    }
+
+    template <typename T>
+    static constexpr bool is_valid_128bit_t = 
+        has_native_u128 && (
+            std::is_same_v<T, native_u128> ||
+            std::is_same_v<T, native_i128> || 
+            is_valid_long_double<T>()
+        );
+
+    template <typename T>
+    using try_valid_long_double_t = std::conditional_t<
+        is_valid_long_double<T>() && has_native_u128,
+        native_u128,
+        T
+    >;
+
+};
+
+
+// is_ld (is long double) is needed cause CUDA does not support long doubles
+template<typename T, bool Is_Long_Double = false>
+struct radix_traits : native_128bit_support {
+
+    static constexpr bool type_is_valid_128 = is_valid_128bit_t<T>;
 
     // type compliance asserts 
     static_assert(
@@ -254,11 +293,6 @@ struct radix_traits {
         (sizeof(T) != 16) || has_native_u128,
         "128-bit keys require native same-width unsigned type support."
     );
-    static_assert(
-        (sizeof(T) != 16) || type_is_valid_128,
-        "Only 128-bit integer keys are supported!"
-    );
-    // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort
 
 
     // set quivalent unsigned type
@@ -303,7 +337,7 @@ struct radix_traits {
         using U = unsigned_of;
 
         U bits = type_to_bits(x);
-        if constexpr (std::is_floating_point_v<T>) {
+        if constexpr (std::is_floating_point_v<T> || Is_Long_Double) {
             bits = (bits & sign_mask_of) ? ~bits : (bits ^ sign_mask_of);
         } else if constexpr (is_signed_integral) {
             bits ^= sign_mask_of;
@@ -323,7 +357,7 @@ struct radix_traits {
             bits = ~bits;
         }
 
-        if constexpr (std::is_floating_point_v<T>) {
+        if constexpr (std::is_floating_point_v<T> || Is_Long_Double) {
             bits = (bits & sign_mask_of) ? (bits ^ sign_mask_of) : ~bits;
             return bits_to_type(bits);
         } else if constexpr (is_signed_integral) {
@@ -350,7 +384,7 @@ struct radix_traits {
 
 
 // alternative interface
-template<typename T>
-using get_unsigned_of = typename radix_traits<T>::unsigned_of;
+template<typename T, bool Is_Long_Double = false>
+using get_unsigned_of = typename radix_traits<T, Is_Long_Double>::unsigned_of;
 
 } // namespace rsort

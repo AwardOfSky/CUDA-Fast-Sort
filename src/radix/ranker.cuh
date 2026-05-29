@@ -35,7 +35,8 @@ __device__ RSORT_FORCEINLINE uint32_t cub_match_any_8_u32(uint32_t label) {
 }
 
 
-// This is pretty much the same kernel as CUB, just translated and simplified a bit
+// This is pretty much the same kernel as CUB
+// just translated and simplified a bit
 template<
     typename Key_T,
     typename Value_T = no_value_t,

@@ -19,7 +19,10 @@
 #endif
 
 #define WARP_SIZE       32
-static_assert(WARP_SIZE == 32, "This code assumes 32-lane NVIDIA hardware warps");
+static_assert(
+    WARP_SIZE == 32,
+    "This implementation assumes 32-lane NVIDIA hardware warps"
+);
 
 #include "tuning.cuh"
 
@@ -226,7 +229,12 @@ __host__ __device__ RSORT_FORCEINLINE uint32_t mix32(uint32_t x) {
 }
 
 
-template<typename Key_T, typename Len_T, bool Pass = false>
+template<
+    typename Key_T,
+    typename Len_T,
+    bool Is_Long_Double = false,
+    bool Pass = false
+>
 __global__ void init_keys(
     Key_T* a,
     Len_T n,
@@ -235,8 +243,8 @@ __global__ void init_keys(
 ) {
 
 
-    using U = get_unsigned_of<Key_T>;
-    using RTraits = radix_traits<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    using U = typename RTraits::unsigned_of;
     
 
     Len_T i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -244,9 +252,9 @@ __global__ void init_keys(
         U x;
 
         // random init based on type
-        if constexpr (sizeof(U) <= 4) {
+        if constexpr ((sizeof(U) <= 4) && !Is_Long_Double) {
             x = mix32(i ^ seed);
-        } else if constexpr (sizeof(U) <= 8) {
+        } else if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
             x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
                 (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
         } else if constexpr (RTraits::has_native_u128) {
@@ -261,7 +269,7 @@ __global__ void init_keys(
 
         // skip every other bytes
         if (arr_mode == Array_Modes::blank_bytes) {
-            if constexpr (sizeof(U) <= 8) {
+            if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
                 x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
             } else if constexpr (RTraits::has_native_u128) {
                 using U128 = typename RTraits::native_u128;
@@ -287,16 +295,33 @@ __global__ void init_keys(
 }
 
 
-template<bool Descending, typename T>
+template<bool Descending, typename T, bool Is_Long_Double = false>
 __global__ void check_sorted(const T* a, size_t n, int* ok) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n - 1) {
+
+        T l_key, r_key;
+        // We need to twiddle in specificall when Is_Long_Double because
+        // Then we have to pass a uint128 pointer and not a long double because
+        // CUDA will demote to double and checks will be wrong and misaligned
+        if constexpr (Is_Long_Double) {
+            l_key = radix_traits<T, true>::twiddle_in<Descending>(a[i]);
+            r_key = radix_traits<T, true>::twiddle_in<Descending>(a[i + 1]);
+            if constexpr (Descending) { // undo descending twiddling
+                l_key = ~l_key;
+                r_key = ~r_key;
+            }
+        } else {
+            l_key = a[i];
+            r_key = a[i + 1];
+        }
+
         if constexpr (Descending) {
-            if (a[i] < a[i+1]) {
+            if (l_key < r_key) {
                 atomicExch(ok, 0);
             }
         } else {
-            if (a[i] > a[i+1]) {
+            if (l_key > r_key)  {
                 atomicExch(ok, 0);
             }
         }

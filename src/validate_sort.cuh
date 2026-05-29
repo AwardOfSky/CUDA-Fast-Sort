@@ -10,30 +10,38 @@
 #include "benchmark_sort.cuh"
 
 // User knobs (check validation types below)
-#define PAIR_VALIDATION     1
-#define U128_BIT_VALIDATION 1
+#define PAIR_VALIDATION         1
+#define LONG_DOUBLE_VALIDATION  1
+#define U128_BIT_VALIDATION     1
 
 
-#if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION
-    #define NATIVE_U128 unsigned __int128,
-    #define NATIVE_I128 __int128,
+// TODOs: redo this with native_128bit_support straucture
+#if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION 
+    #define NATIVE_U128_TOKEN   native_128bit_support::native_u128,
+    #define NATIVE_I128_TOKEN   native_128bit_support::native_i128,
 #else
-    #define NATIVE_U128
-    #define NATIVE_I128
+    #define NATIVE_U128_TOKEN
+    #define NATIVE_I128_TOKEN
 #endif
 
+#if defined(LONG_DOUBLE_VALIDATION)
+    #define LONG_DOUBLE_TOKEN   long double, 
+#else
+    #define LONG_DOUBLE_TOKEN
+#endif
 
 // ======================= Validation Types =======================
 #define U32_TYPE    uint32_t,
-#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128
-#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128
-#define FP_TYPES    float, double,
+#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128_TOKEN
+#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128_TOKEN
+#define FP_TYPES    float, double, LONG_DOUBLE_TOKEN
 #define ALL_TYPES   INT_TYPES FP_TYPES
 
 // Change types to test HERE!!!
 #define TYPE_SET_TEST ALL_TYPES
 // ================================================================
 
+// TODOs: #ifdef VALIDATION_TEST include lib
 #ifndef VALIDATION_TEST
 #define VALIDATION_TEST     1
 #endif 

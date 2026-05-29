@@ -22,13 +22,14 @@ template<
     typename Lookback_T,
     typename Len_T,
     typename Value_T = no_value_t,
-    bool Short_Mode = false
+    bool Short_Mode = false,
+    bool Is_Long_Double = false
 >
 struct Scatter {
 
 
     using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
-    using RTraits = radix_traits<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
     using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
     using Stage_Ind_T = typename RT::Stage_Ind_T;
 

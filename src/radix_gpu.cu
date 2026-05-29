@@ -30,7 +30,7 @@
 #include "bench_parser.h"
 
 // vvv HEAVY! Only enable if you want to run validation.
-#define VALIDATION_TEST     0
+#define VALIDATION_TEST     1
 #include "validate_sort.cuh"
 
 
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
 
     // Benchmark example
     if (!conf.validation) {
-        bool ret = rsort::benchmark<false, uint32_t, size_t>(
+        bool ret = rsort::benchmark<true, uint32_t, size_t>(
             conf.n,
             conf.iterations,
             conf.warmups,

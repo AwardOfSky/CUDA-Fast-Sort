@@ -111,7 +111,8 @@ template<
     typename Key_T,
     typename Len_T,
     typename Value_T = no_value_t,
-    bool Short_Mode = false
+    bool Short_Mode = false,
+    bool Is_Long_Double = false
 >
 __global__ __launch_bounds__(radix_tuning<Key_T, Value_T, Short_Mode>::REORDER_THREADS)
 void onesweep_byte(
@@ -129,13 +130,13 @@ void onesweep_byte(
     
     using Lookback_T = typename Lookback_Policy::T;
     using LB = typename Lookback_Policy::conf;
-    using U = get_unsigned_of<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    using U = typename RTraits::unsigned_of;
     using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
-    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T, Short_Mode>;
-
+    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T, Short_Mode, Is_Long_Double>;
     using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
-    using RTraits = radix_traits<Key_T>;
     using Tuning_T = typename RT::Tuning_T;
+
     constexpr Tuning_T SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
     constexpr Tuning_T LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
     constexpr Tuning_T ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
@@ -319,15 +320,15 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 template <
     bool Descending,
     typename Lookback_Policy,
-    typename Key_T,
+    typename Key_T_tentative,
     typename Len_T,
     typename Value_T = no_value_t,
     bool Short_Mode = false
 >
 static void onesweep_byte_sort_enqueue(
     cudaStream_t stream,
-    Key_T* __restrict__ d_inout,
-    Key_T* __restrict__ d_tmp,
+    Key_T_tentative* __restrict__ d_inout_keys,
+    Key_T_tentative* __restrict__ d_tmp_keys,
     typename Lookback_Policy::T* __restrict__ d_gp,
     uint32_t* d_counter,
     typename Lookback_Policy::T* __restrict__ d_look_partial,
@@ -339,6 +340,14 @@ static void onesweep_byte_sort_enqueue(
 ) {
 
 
+    // reinterpret input if sorting 128-bit long doubles
+    // (CUDA doesn't support those)
+    constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T_tentative>();
+    using Key_T = native_128bit_support::try_valid_long_double_t<Key_T_tentative>;
+    Key_T* d_inout = reinterpret_cast<Key_T*>(d_inout_keys);
+    Key_T* d_tmp = reinterpret_cast<Key_T*>(d_tmp_keys);
+
+    // normal aliasing
     using LB = typename Lookback_Policy::conf;
     using Lookback_T = typename Lookback_Policy::T;
     constexpr bool lb_epoch = Lookback_Policy::epoch;
@@ -372,7 +381,7 @@ static void onesweep_byte_sort_enqueue(
 
     // Histogram call - template on dynamic work stealing (using lookback type for compile time branching)
     if constexpr (sizeof(Lookback_T) <= sizeof(uint32_t)) {
-        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, true>
+        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, true>
         <<<HIST_BLOCKS, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     } else {
         uint32_t h_blocks = HIST_BLOCKS;
@@ -380,7 +389,7 @@ static void onesweep_byte_sort_enqueue(
         if (h_blocks > hist_tiles) {
             h_blocks = hist_tiles;
         }
-        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, false>
+        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, false>
         <<<h_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     }
 
@@ -427,7 +436,7 @@ static void onesweep_byte_sort_enqueue(
         }
 
         // onesweep entry
-        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode>
+        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode, is_ld>
         <<<num_blocks, REORDER_THREADS, 0, stream>>>(
             in, out, n, d_gp, look_partial_pass, it, lb_bits, in_vals, out_vals
         );

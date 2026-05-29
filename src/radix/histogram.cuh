@@ -103,7 +103,14 @@ __device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
 
 
 // Main histogram kernel performaing a global count of all passes
-template <bool Descending, typename Lookback_T, typename Key_T, typename Len_T, bool DYNAMIC_WORK_STEAL = true>
+template <
+    bool Descending,
+    typename Lookback_T,
+    typename Key_T,
+    typename Len_T,
+    bool Is_Long_Double = false,
+    bool DYNAMIC_WORK_STEAL = true
+>
 __global__ void GHistogram_8bits(
     const Key_T* __restrict__ inputs,
     Len_T n,
@@ -112,7 +119,7 @@ __global__ void GHistogram_8bits(
     uint32_t* __restrict__ counter) {
 
     using RT = radix_tuning<Key_T>;
-    using RTraits = radix_traits<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
     constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
@@ -122,11 +129,12 @@ __global__ void GHistogram_8bits(
     constexpr uint32_t GHIST_ITEM_PER_BLOCK = H::GHIST_ITEM_PER_BLOCK;
     constexpr uint32_t SCAN256_WARPS = H::SCAN256_WARPS;
     constexpr uint32_t EXCLUSIVE_SCAN_256 = H::EXCLUSIVE_SCAN_256;
-    using U = get_unsigned_of<Key_T>;
+    using U = typename RTraits::unsigned_of;
 
 
     __shared__ uint32_t local_counters[RADIX_PASSES][RADIX_BIN_SIZE];
-    //if constexpr (EXCLUSIVE_SCAN_256) {
+    // TODOs: replace this?
+    // if constexpr (EXCLUSIVE_SCAN_256) {
     __shared__ uint32_t scan_warp_sums[SCAN256_WARPS];
     //}
 
