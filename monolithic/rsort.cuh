@@ -5,7 +5,7 @@
 
     Validation suite was run both in Windows (MSVC) and Linux (gcc):
         Linux: 6552/6552 tests passed (signed and unsigned 128-bit integers)
-        Windows: N/N tests passed
+        Windows: 4200/4200 tests passed
     Compilation tested with both -std=c++17 and -std=c++20 standards
     Validation is template HEAVY! Only enable if you want to run validation.
 
@@ -340,6 +340,7 @@ struct native_128bit_support {
     static constexpr bool has_native_u128 = false;
 #endif
 
+
     // always returns false in CUDA code
     template <typename T>
     static constexpr bool is_valid_long_double() {
@@ -359,11 +360,21 @@ struct native_128bit_support {
         return is_ld;
     }
 
+
+#if defined(__SIZEOF_INT128__)
+    template <typename T>
+    static constexpr bool is_native_128_integral_v =
+        std::is_same_v<T, native_u128> ||
+        std::is_same_v<T, native_i128>;
+#else
+    template <typename T>
+    static constexpr bool is_native_128_integral_v = false;
+#endif
+
     template <typename T>
     static constexpr bool is_valid_128bit_t = 
         has_native_u128 && (
-            std::is_same_v<T, native_u128> ||
-            std::is_same_v<T, native_i128> || 
+            is_native_128_integral_v<T> ||
             is_valid_long_double<T>()
         );
 
@@ -373,7 +384,6 @@ struct native_128bit_support {
         native_u128,
         T
     >;
-
 };
 
 
@@ -3101,7 +3111,7 @@ int benchmark(
     };
     
     // do not time memory allocations
-    size_t vals_bytes = 0;
+    [[maybe_unused]] size_t vals_bytes = 0;
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
     if constexpr (SORTING_PAIRS) {
         // align values up n bytes 
@@ -3131,7 +3141,7 @@ int benchmark(
 
     // CUDA long double support
     using Key_T_Sort = native_128bit_support::try_valid_long_double_t<Key_T>;
-    constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T>();
+    static constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T>();
     Key_T_Sort* d_keys_sort = reinterpret_cast<Key_T_Sort*>(d_keys);
 
     // define sorting iteration

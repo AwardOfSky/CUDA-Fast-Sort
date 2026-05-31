@@ -240,6 +240,7 @@ struct native_128bit_support {
     static constexpr bool has_native_u128 = false;
 #endif
 
+
     // always returns false in CUDA code
     template <typename T>
     static constexpr bool is_valid_long_double() {
@@ -259,11 +260,21 @@ struct native_128bit_support {
         return is_ld;
     }
 
+
+#if defined(__SIZEOF_INT128__)
+    template <typename T>
+    static constexpr bool is_native_128_integral_v =
+        std::is_same_v<T, native_u128> ||
+        std::is_same_v<T, native_i128>;
+#else
+    template <typename T>
+    static constexpr bool is_native_128_integral_v = false;
+#endif
+
     template <typename T>
     static constexpr bool is_valid_128bit_t = 
         has_native_u128 && (
-            std::is_same_v<T, native_u128> ||
-            std::is_same_v<T, native_i128> || 
+            is_native_128_integral_v<T> ||
             is_valid_long_double<T>()
         );
 
@@ -273,7 +284,6 @@ struct native_128bit_support {
         native_u128,
         T
     >;
-
 };
 
 

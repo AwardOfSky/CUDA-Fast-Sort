@@ -338,7 +338,7 @@ Checklist of standardization efforts for all major vN.N releases from version v0
 
   - Validation suite passes all test in both Windows (MSVC) and Linux (gcc):
       - Linux: 6552/6552 tests passed (long doubles, signed and unsigned 128-bit integers).
-      - Windows: N/M tests passed.
+      - Windows: 4200/4200 tests passed.
   - Compilation of all templating (validation) must return no warnings with both `-std=c++17` and `-std=c++20` flag standards, for Windows (MSVC), and for Linux (gcc).
   - Updated [monolithic header](monolithic/rsort.cuh).
   <!-- - Updated benchmarking data. -->
