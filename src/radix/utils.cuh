@@ -198,14 +198,16 @@ enum class Array_Modes : uint32_t {
     start,
     random,
     blank_bytes,
+    asc,
     end,
 };
 
 
 constexpr const char* arr_modes_to_string(Array_Modes mode) {
     switch (mode) {
-        case Array_Modes::random:       return "random";
-        case Array_Modes::blank_bytes:  return "byte_skip";
+        case Array_Modes::blank_bytes:      return "byte_skip";
+        case Array_Modes::asc:              return "ascending";
+        case Array_Modes::random: default:  return "random";
     }
     return "unknown";
 }
@@ -245,49 +247,58 @@ __global__ void init_keys(
 
     using RTraits = radix_traits<Key_T, Is_Long_Double>;
     using U = typename RTraits::unsigned_of;
+
+    static_assert(
+        (sizeof(Key_T) <= 8) || (sizeof(Key_T) == 16 && RTraits::has_native_u128), 
+        "[init_keys]: Key type must be at most 64-bit, or 128-bit if native support exists."
+    );
     
 
     Len_T i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         U x;
 
-        // random init based on type
-        if constexpr ((sizeof(U) <= 4) && !Is_Long_Double) {
-            x = mix32(i ^ seed);
-        } else if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
-            x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
-                (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
-        } else if constexpr (RTraits::has_native_u128) {
-            using U128 = typename RTraits::native_u128;
-            x = (U128(mix32(i + 0x00000000u) ^ seed) << 96) |
-                (U128(mix32(i + 0x9e3779b9u) ^ seed) << 64) |
-                (U128(mix32(i + 0x3c6ef372u) ^ seed) << 32) |
-                (U128(mix32(i + 0xdaa66d2bu) ^ seed) << 0);
-        } else {
-            return;
-        }
-
-        // skip every other bytes
-        if (arr_mode == Array_Modes::blank_bytes) {
-            if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
-                x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
+        if (arr_mode != Array_Modes::asc) {
+            // random init based on type
+            if constexpr ((sizeof(U) <= 4) && !Is_Long_Double) {
+                x = mix32(i ^ seed);
+            } else if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
+                x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
+                    (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
             } else if constexpr (RTraits::has_native_u128) {
                 using U128 = typename RTraits::native_u128;
-
-                U128 keep =
-                    (U128(0xFF00FF00FF00FF00ull) << 64) |
-                    U128(0xFF00FF00FF00FF00ull);
-                U128 fill =
-                    (U128(0x0055005500550055ull) << 64) |
-                    U128(0x0055005500550055ull);
-                
-                x = U((U128(x) & keep) | fill);
+                x = (U128(mix32(i + 0x00000000u) ^ seed) << 96) |
+                    (U128(mix32(i + 0x9e3779b9u) ^ seed) << 64) |
+                    (U128(mix32(i + 0x3c6ef372u) ^ seed) << 32) |
+                    (U128(mix32(i + 0xdaa66d2bu) ^ seed) << 0);
             } else {
                 return;
             }
+
+            // skip every other bytes
+            if (arr_mode == Array_Modes::blank_bytes) {
+                if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
+                    x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
+                } else if constexpr (RTraits::has_native_u128) {
+                    using U128 = typename RTraits::native_u128;
+
+                    U128 keep =
+                        (U128(0xFF00FF00FF00FF00ull) << 64) |
+                        U128(0xFF00FF00FF00FF00ull);
+                    U128 fill =
+                        (U128(0x0055005500550055ull) << 64) |
+                        U128(0x0055005500550055ull);
+                    
+                    x = U((U128(x) & keep) | fill);
+                } else {
+                    return;
+                }
+            }
+        } else {
+            x = U(i);
         }
 
-        // copy bits to dest
+        // copy bits to dest (Pass == don't intialize)
         if constexpr (!Pass) {
             a[i] = RTraits::bits_to_type(x);
         }
@@ -295,26 +306,40 @@ __global__ void init_keys(
 }
 
 
+/*
+    Post-sort order verification
+
+    Order is checked on manifested values rather than radix identities,
+    except for long doubles (see below).
+
+    Note that IEEE NaNs are unordered: comparisons involving NaNs
+    always evaluate to false. As a result, NaNs are not considered
+    when validating sortedness. Exact bit-level preservation of NaNs
+    (including payloads) is instead verified by the key-value integrity
+    checks, which compare key identities rather than manifested values.
+    So here, NaN's are ignore because we're checking for false statements
+    and they evaluate to false with > and < operators.
+
+    With long doubles, we compare on identify, as the inexistent support
+    for long doubles on CUDA makes it impossible to correctly compare
+    128-bit floating values.
+    Twiddle in is applied on that case. The cast is redundant as, in these
+    verification kernels, a long double is already reinterpreted as
+    unsigned, to not be demoted to 64-bit.
+*/
 template<bool Descending, typename T, bool Is_Long_Double = false>
 __global__ void check_sorted(const T* a, size_t n, int* ok) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n - 1) {
 
         T l_key, r_key;
-        // We need to twiddle in specificall when Is_Long_Double because
-        // Then we have to pass a uint128 pointer and not a long double because
-        // CUDA will demote to double and checks will be wrong and misaligned
         if constexpr (Is_Long_Double) {
-            l_key = radix_traits<T, true>::twiddle_in<Descending>(a[i]);
-            r_key = radix_traits<T, true>::twiddle_in<Descending>(a[i + 1]);
-            if constexpr (Descending) { // undo descending twiddling
-                l_key = ~l_key;
-                r_key = ~r_key;
-            }
+            l_key = (T)radix_traits<T, Is_Long_Double>::twiddle_in<false>(a[i]);
+            r_key = (T)radix_traits<T, Is_Long_Double>::twiddle_in<false>(a[i + 1]);
         } else {
             l_key = a[i];
             r_key = a[i + 1];
-        }
+        }        
 
         if constexpr (Descending) {
             if (l_key < r_key) {
@@ -324,6 +349,83 @@ __global__ void check_sorted(const T* a, size_t n, int* ok) {
             if (l_key > r_key)  {
                 atomicExch(ok, 0);
             }
+        }
+    }
+}
+
+
+template <typename T, bool Is_Long_Double = false>
+__device__ T correct_ld(T val) {
+    using RTraits = radix_traits<T, Is_Long_Double>;
+    if constexpr (Is_Long_Double) {
+        return (T)RTraits::twiddle_in<false>(val);
+    }
+    return val;
+}
+
+
+/*  
+    Post-sort KV-pair verification
+    
+    Performs verifications on unsigned representation (value identity).
+    This is achieve by twiddling in without the Descending transform.
+    The reason is that for floating types there can be differences,
+    even though they are sorted and same value (NaN != NaN).
+    We want to know: is the key the same as the original?
+*/
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T,
+    bool Is_Long_Double = false
+>
+__global__ void check_pairings(
+    const Key_T* keys_or, 
+    const Value_T* vals_or, 
+    const Key_T* keys_sor, 
+    const Value_T* vals_sor, 
+    Len_T n,
+    int* ok
+) {
+
+
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    using U = typename RTraits::unsigned_of;
+
+
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= n) {
+        return;
+    }
+
+    // This should not happen on ascending value data, something is wrong
+    if (vals_sor[i] >= n) {
+        atomicExch(ok, 0);
+        return;
+    }
+
+    // no need to twiddle for vals because they're indices here in the verification anyway
+    U keys_sor_i = RTraits::twiddle_in<false>(keys_sor[i]);
+    U keys_or_vals_sor_i = RTraits::twiddle_in<false>(keys_or[vals_sor[i]]);
+
+    // check pairings both ways
+    if (keys_sor_i != keys_or_vals_sor_i) {
+        atomicExch(ok, 0);
+        return;
+    }
+    if (vals_sor[i] != vals_or[vals_sor[i]]) {
+        atomicExch(ok, 0);
+        return;
+    }
+
+    // check stability
+    if (i < n - 1) {
+        U keys_sor_i1 = RTraits::twiddle_in<false>(keys_sor[i + 1]);
+
+        if ((keys_sor_i == keys_sor_i1) && (vals_sor[i] > vals_sor[i + 1])) {
+            atomicExch(ok, 0);
         }
     }
 }

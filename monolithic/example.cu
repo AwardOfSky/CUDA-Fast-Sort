@@ -11,7 +11,7 @@
 
 
 // define API examples
-#define API_EXAMPLE     1
+#define API_EXAMPLE     0
 #define API_KV_SORT     0
 #define API_KV_DESC     0
 
@@ -20,7 +20,7 @@
 // Struct could be given as a parameter, but better to have
 // individual explicit arguments
 struct Global_Config {
-    size_t n = size_t(1) << 27;
+    size_t n = size_t(1) << 27; // size_t(1) << 27
     uint32_t iterations = 30; // 30
     uint32_t warmups = 10; // 20
     uint32_t warm_ms = 250; // 250 ms

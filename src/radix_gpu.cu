@@ -1,7 +1,7 @@
 /*
     Validation suite was run both in Windows (MSVC) and Linux (gcc)
-        Linux: 3168/3168 tests passed (signed and unsigned 128-bit integers)
-        Windows: 2200/2200 tests passed
+        Linux: 6552/6552 tests passed (signed and unsigned 128-bit integers)
+        Windows: N/N tests passed
     Compilation tested with both -std=c++17 and -std=c++20 standards
     Validation is template HEAVY! Only enable if you want to run validation.
 
@@ -14,7 +14,6 @@
 
     TODOs:
     - Change C-style pointers to C++ style
-    - Add suport for long doubles
     - AoS API (when nvcc gets reflection)
 */
 
@@ -30,7 +29,7 @@
 #include "bench_parser.h"
 
 // vvv HEAVY! Only enable if you want to run validation.
-#define VALIDATION_TEST     1
+#define VALIDATION_TEST     0
 #include "validate_sort.cuh"
 
 
@@ -48,7 +47,7 @@ int main(int argc, char** argv) {
 
     // Benchmark example
     if (!conf.validation) {
-        bool ret = rsort::benchmark<true, uint32_t, size_t>(
+        bool ret = rsort::benchmark<false, uint32_t, size_t>(
             conf.n,
             conf.iterations,
             conf.warmups,

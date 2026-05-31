@@ -229,7 +229,7 @@ struct radix_tuning : radix_consts {
 
 struct native_128bit_support {
 
-// 128 bit support (for integer types in GCC and Clang)
+    // 128 bit support (for integer types in GCC and Clang)
 #if defined(__SIZEOF_INT128__)
     using native_u128 = unsigned __int128;
     using native_i128 = __int128;

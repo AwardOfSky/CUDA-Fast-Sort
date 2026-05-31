@@ -2,6 +2,7 @@
 // example: ./radix_gpu --validation --iterations 1 --warmup 0
 #pragma once
 
+
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cstdio>
@@ -15,7 +16,6 @@
 #define U128_BIT_VALIDATION     1
 
 
-// TODOs: redo this with native_128bit_support straucture
 #if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION 
     #define NATIVE_U128_TOKEN   native_128bit_support::native_u128,
     #define NATIVE_I128_TOKEN   native_128bit_support::native_i128,
@@ -24,7 +24,7 @@
     #define NATIVE_I128_TOKEN
 #endif
 
-#if defined(LONG_DOUBLE_VALIDATION)
+#if defined(__SIZEOF_INT128__) && LONG_DOUBLE_VALIDATION
     #define LONG_DOUBLE_TOKEN   long double, 
 #else
     #define LONG_DOUBLE_TOKEN
@@ -105,15 +105,21 @@ Validation_Result validate_radix_type(
     uint32_t bit_end = max_array_bits(vram_gb, size_el);
     uint32_t bit_start = bit_end - 10;
 
-    for (int i = (int)bit_start; i <= (int)bit_end; ++i) {
+    // small array tests indices [1, small_tests]
+    const int small_tests = 3;
+    static const uint64_t pow10[] = {1ull, 10ull, 100ull, 1000ull};
+
+    for (int i = (int)bit_start - small_tests; i <= (int)bit_end; ++i) {
         
-        uint64_t n = 1ull << i;
+        uint64_t n = (i < bit_start) ? (pow10[bit_start - i]) : (1ull << i);
         int pass_ok;
+
         if (descending) {
             pass_ok = benchmark<true, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         } else {
             pass_ok = benchmark<false, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         }
+
         result.add(pass_ok);
 
         if (!pass_ok) {

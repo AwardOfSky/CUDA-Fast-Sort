@@ -38,6 +38,7 @@ template <
 >
 struct Sort_Workspace {
     using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
+    using LT = Lookback_T;
 
 
     Len_T num_blocks = 0;
@@ -48,6 +49,10 @@ struct Sort_Workspace {
     size_t off_gp = 0;
     size_t off_counter = 0;
     size_t off_look_partial = 0;
+
+    // variables reserved for post-sort verification
+    bool init_keys = false;
+    bool init_vals = false;
 
 
     struct View {
@@ -100,6 +105,44 @@ struct Sort_Workspace {
     }
 };
 
+/*
+template <
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T,
+    bool Short_Mode = false
+>
+static auto get_workspace(Len_T n) {
+    using Lookback_T = typename Lookback_Policy::T;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
+    Workspace ws = Workspace::template build<Lookback_Policy>(n);
+    return ws;
+}
+
+
+template <
+    typename Key_T,
+    typename Len_T,
+    typename Value_T
+>
+static auto generate_workspace(Len_T n) {
+
+    if (n <= LOW_N) {
+        return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, true>(n);
+    }
+
+    Lookback_Modes mode = get_lookback_mode(n); // according to array size
+
+    switch (mode) {
+        case Lookback_Modes::u32_epoch:
+            return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, false>(n);
+        case Lookback_Modes::u32_plain:
+            return get_workspace<Fast_LB_Policy, Key_T, Len_T, Value_T, false>(n);
+        case Lookback_Modes::u64_epoch: default:
+            return get_workspace<General_LB_Policy, Key_T, Len_T, Value_T, false>(n);
+    }
+}*/
 
 
 // Non-decoupled lookback path with early partial publication via chained callback

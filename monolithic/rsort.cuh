@@ -4,8 +4,8 @@
     Might not be up to date with active delevelopment!
 
     Validation suite was run both in Windows (MSVC) and Linux (gcc):
-        Linux: 3168/3168 tests passed (signed and unsigned 128-bit integers)
-        Windows: 2200/2200 tests passed
+        Linux: 6552/6552 tests passed (signed and unsigned 128-bit integers)
+        Windows: N/N tests passed
     Compilation tested with both -std=c++17 and -std=c++20 standards
     Validation is template HEAVY! Only enable if you want to run validation.
 
@@ -18,7 +18,6 @@
 
     TODOs:
     - Change C-style pointers to C++ style
-    - Add suport for long doubles
     - AoS API (when nvcc gets reflection)
 */
 
@@ -47,6 +46,7 @@
 // (check validation types below)
 #define VALIDATION_TEST                 0
 #define PAIR_VALIDATION                 1
+#define LONG_DOUBLE_VALIDATION          1
 #define U128_BIT_VALIDATION             1
 
 #define FORCE_32BIT_STAGING             1
@@ -73,31 +73,37 @@
 
 #define BENCH_DEBUG                     0
 
+
 // ========================================================================
 
-
-// 128 bit type test support
-#if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION
-    #define NATIVE_U128 unsigned __int128,
-    #define NATIVE_I128 __int128,
+#if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION 
+    #define NATIVE_U128_TOKEN   native_128bit_support::native_u128,
+    #define NATIVE_I128_TOKEN   native_128bit_support::native_i128,
 #else
-    #define NATIVE_U128
-    #define NATIVE_I128
+    #define NATIVE_U128_TOKEN
+    #define NATIVE_I128_TOKEN
+#endif
+
+#if defined(__SIZEOF_INT128__) && LONG_DOUBLE_VALIDATION
+    #define LONG_DOUBLE_TOKEN   long double, 
+#else
+    #define LONG_DOUBLE_TOKEN
 #endif
 
 
-//  ========================== Validation Types ===========================
+// ======================= Validation Types =======================
 
 #define U32_TYPE    uint32_t,
-#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128
-#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128
-#define FP_TYPES    float, double,
+#define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128_TOKEN
+#define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128_TOKEN
+#define FP_TYPES    float, double, LONG_DOUBLE_TOKEN
 #define ALL_TYPES   INT_TYPES FP_TYPES
 
-// === Change types to test HERE vvv ===
+// Change types to test HERE!!!
 #define TYPE_SET_TEST ALL_TYPES
 
-// ========================================================================
+
+// ================================================================
 
 #if defined(_MSC_VER)
   #define RSORT_FORCEINLINE __forceinline
@@ -163,7 +169,7 @@ struct radix_tuning : radix_consts {
     // our size budget per element (128 bits for now), in which case we revert
     // to index staging.
     //
-    // Both staging modes can be overwritten
+    // Both staging modes can be overridden
     //
     // Notes:
     // - Key Staging can't be disabled
@@ -321,8 +327,7 @@ struct radix_tuning : radix_consts {
 };
 
 
-template<typename T>
-struct radix_traits {
+struct native_128bit_support {
 
     // 128 bit support (for integer types in GCC and Clang)
 #if defined(__SIZEOF_INT128__)
@@ -330,13 +335,53 @@ struct radix_traits {
     using native_i128 = __int128;
     static constexpr bool has_native_u128 = true;
 #else
-    using native_u128 = uint64_t;
-    using native_i128 = int64_t;
+    using native_u128 = no_value_t;
+    using native_i128 = no_value_t;
     static constexpr bool has_native_u128 = false;
 #endif
-    static constexpr bool type_is_valid_128 = 
-        std::is_same_v<T, native_u128> || std::is_same_v<T, native_i128>;
 
+    // always returns false in CUDA code
+    template <typename T>
+    static constexpr bool is_valid_long_double() {
+    
+        constexpr bool IS_LONG_DOUBLE = std::is_same_v<T, long double>;
+        static_assert(
+            !IS_LONG_DOUBLE ||
+            (sizeof(long double) == 16) ||
+            (sizeof(long double) == 8),
+            "Sorting long doubles expects 64 or 128 bits."
+        );
+        // if long double is 64-bit, there is no need for any of this...
+        // (sizeof(long double) == 16) acts as: 
+        // are we calling this from CUDA or host code?
+        constexpr bool is_ld = IS_LONG_DOUBLE && (sizeof(long double) == 16);
+
+        return is_ld;
+    }
+
+    template <typename T>
+    static constexpr bool is_valid_128bit_t = 
+        has_native_u128 && (
+            std::is_same_v<T, native_u128> ||
+            std::is_same_v<T, native_i128> || 
+            is_valid_long_double<T>()
+        );
+
+    template <typename T>
+    using try_valid_long_double_t = std::conditional_t<
+        is_valid_long_double<T>() && has_native_u128,
+        native_u128,
+        T
+    >;
+
+};
+
+
+// is_ld (is long double) is needed cause CUDA does not support long doubles
+template<typename T, bool Is_Long_Double = false>
+struct radix_traits : native_128bit_support {
+
+    static constexpr bool type_is_valid_128 = is_valid_128bit_t<T>;
 
     // type compliance asserts 
     static_assert(
@@ -348,11 +393,6 @@ struct radix_traits {
         (sizeof(T) != 16) || has_native_u128,
         "128-bit keys require native same-width unsigned type support."
     );
-    static_assert(
-        (sizeof(T) != 16) || type_is_valid_128,
-        "Only 128-bit integer keys are supported!"
-    );
-    // Are you on Linux and want to sort long doubles on your GPU? Ask Stalin Sort
 
 
     // set quivalent unsigned type
@@ -397,7 +437,7 @@ struct radix_traits {
         using U = unsigned_of;
 
         U bits = type_to_bits(x);
-        if constexpr (std::is_floating_point_v<T>) {
+        if constexpr (std::is_floating_point_v<T> || Is_Long_Double) {
             bits = (bits & sign_mask_of) ? ~bits : (bits ^ sign_mask_of);
         } else if constexpr (is_signed_integral) {
             bits ^= sign_mask_of;
@@ -417,7 +457,7 @@ struct radix_traits {
             bits = ~bits;
         }
 
-        if constexpr (std::is_floating_point_v<T>) {
+        if constexpr (std::is_floating_point_v<T> || Is_Long_Double) {
             bits = (bits & sign_mask_of) ? (bits ^ sign_mask_of) : ~bits;
             return bits_to_type(bits);
         } else if constexpr (is_signed_integral) {
@@ -444,8 +484,8 @@ struct radix_traits {
 
 
 // alternative interface
-template<typename T>
-using get_unsigned_of = typename radix_traits<T>::unsigned_of;
+template<typename T, bool Is_Long_Double = false>
+using get_unsigned_of = typename radix_traits<T, Is_Long_Double>::unsigned_of;
 
 } // namespace rsort
 
@@ -623,14 +663,16 @@ enum class Array_Modes : uint32_t {
     start,
     random,
     blank_bytes,
+    asc,
     end,
 };
 
 
 constexpr const char* arr_modes_to_string(Array_Modes mode) {
     switch (mode) {
-        case Array_Modes::random:       return "random";
-        case Array_Modes::blank_bytes:  return "byte_skip";
+        case Array_Modes::blank_bytes:      return "byte_skip";
+        case Array_Modes::asc:              return "ascending";
+        case Array_Modes::random: default:  return "random";
     }
     return "unknown";
 }
@@ -654,7 +696,12 @@ __host__ __device__ RSORT_FORCEINLINE uint32_t mix32(uint32_t x) {
 }
 
 
-template<typename Key_T, typename Len_T, bool Pass = false>
+template<
+    typename Key_T,
+    typename Len_T,
+    bool Is_Long_Double = false,
+    bool Pass = false
+>
 __global__ void init_keys(
     Key_T* a,
     Len_T n,
@@ -663,51 +710,60 @@ __global__ void init_keys(
 ) {
 
 
-    using U = get_unsigned_of<Key_T>;
-    using RTraits = radix_traits<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    using U = typename RTraits::unsigned_of;
+
+    static_assert(
+        (sizeof(Key_T) <= 8) || (sizeof(Key_T) == 16 && RTraits::has_native_u128), 
+        "[init_keys]: Key type must be at most 64-bit, or 128-bit if native support exists."
+    );
     
 
     Len_T i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         U x;
 
-        // random init based on type
-        if constexpr (sizeof(U) <= 4) {
-            x = mix32(i ^ seed);
-        } else if constexpr (sizeof(U) <= 8) {
-            x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
-                (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
-        } else if constexpr (RTraits::has_native_u128) {
-            using U128 = typename RTraits::native_u128;
-            x = (U128(mix32(i + 0x00000000u) ^ seed) << 96) |
-                (U128(mix32(i + 0x9e3779b9u) ^ seed) << 64) |
-                (U128(mix32(i + 0x3c6ef372u) ^ seed) << 32) |
-                (U128(mix32(i + 0xdaa66d2bu) ^ seed) << 0);
-        } else {
-            return;
-        }
-
-        // skip every other bytes
-        if (arr_mode == Array_Modes::blank_bytes) {
-            if constexpr (sizeof(U) <= 8) {
-                x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
+        if (arr_mode != Array_Modes::asc) {
+            // random init based on type
+            if constexpr ((sizeof(U) <= 4) && !Is_Long_Double) {
+                x = mix32(i ^ seed);
+            } else if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
+                x = (uint64_t(mix32(i + 0x00000000u) ^ seed) << 32) |
+                    (uint64_t(mix32(i + 0x9e3779b9u) ^ seed) << 0);
             } else if constexpr (RTraits::has_native_u128) {
                 using U128 = typename RTraits::native_u128;
-
-                U128 keep =
-                    (U128(0xFF00FF00FF00FF00ull) << 64) |
-                    U128(0xFF00FF00FF00FF00ull);
-                U128 fill =
-                    (U128(0x0055005500550055ull) << 64) |
-                    U128(0x0055005500550055ull);
-                
-                x = U((U128(x) & keep) | fill);
+                x = (U128(mix32(i + 0x00000000u) ^ seed) << 96) |
+                    (U128(mix32(i + 0x9e3779b9u) ^ seed) << 64) |
+                    (U128(mix32(i + 0x3c6ef372u) ^ seed) << 32) |
+                    (U128(mix32(i + 0xdaa66d2bu) ^ seed) << 0);
             } else {
                 return;
             }
+
+            // skip every other bytes
+            if (arr_mode == Array_Modes::blank_bytes) {
+                if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
+                    x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
+                } else if constexpr (RTraits::has_native_u128) {
+                    using U128 = typename RTraits::native_u128;
+
+                    U128 keep =
+                        (U128(0xFF00FF00FF00FF00ull) << 64) |
+                        U128(0xFF00FF00FF00FF00ull);
+                    U128 fill =
+                        (U128(0x0055005500550055ull) << 64) |
+                        U128(0x0055005500550055ull);
+                    
+                    x = U((U128(x) & keep) | fill);
+                } else {
+                    return;
+                }
+            }
+        } else {
+            x = U(i);
         }
 
-        // copy bits to dest
+        // copy bits to dest (Pass == don't intialize)
         if constexpr (!Pass) {
             a[i] = RTraits::bits_to_type(x);
         }
@@ -715,18 +771,126 @@ __global__ void init_keys(
 }
 
 
-template<bool Descending, typename T>
+/*
+    Post-sort order verification
+
+    Order is checked on manifested values rather than radix identities,
+    except for long doubles (see below).
+
+    Note that IEEE NaNs are unordered: comparisons involving NaNs
+    always evaluate to false. As a result, NaNs are not considered
+    when validating sortedness. Exact bit-level preservation of NaNs
+    (including payloads) is instead verified by the key-value integrity
+    checks, which compare key identities rather than manifested values.
+    So here, NaN's are ignore because we're checking for false statements
+    and they evaluate to false with > and < operators.
+
+    With long doubles, we compare on identify, as the inexistent support
+    for long doubles on CUDA makes it impossible to correctly compare
+    128-bit floating values.
+    Twiddle in is applied on that case. The cast is redundant as, in these
+    verification kernels, a long double is already reinterpreted as
+    unsigned, to not be demoted to 64-bit.
+*/
+template<bool Descending, typename T, bool Is_Long_Double = false>
 __global__ void check_sorted(const T* a, size_t n, int* ok) {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n - 1) {
+
+        T l_key, r_key;
+        if constexpr (Is_Long_Double) {
+            l_key = (T)radix_traits<T, Is_Long_Double>::twiddle_in<false>(a[i]);
+            r_key = (T)radix_traits<T, Is_Long_Double>::twiddle_in<false>(a[i + 1]);
+        } else {
+            l_key = a[i];
+            r_key = a[i + 1];
+        }        
+
         if constexpr (Descending) {
-            if (a[i] < a[i+1]) {
+            if (l_key < r_key) {
                 atomicExch(ok, 0);
             }
         } else {
-            if (a[i] > a[i+1]) {
+            if (l_key > r_key)  {
                 atomicExch(ok, 0);
             }
+        }
+    }
+}
+
+
+template <typename T, bool Is_Long_Double = false>
+__device__ T correct_ld(T val) {
+    using RTraits = radix_traits<T, Is_Long_Double>;
+    if constexpr (Is_Long_Double) {
+        return (T)RTraits::twiddle_in<false>(val);
+    }
+    return val;
+}
+
+
+/*  
+    Post-sort KV-pair verification
+    
+    Performs verifications on unsigned representation (value identity).
+    This is achieve by twiddling in without the Descending transform.
+    The reason is that for floating types there can be differences,
+    even though they are sorted and same value (NaN != NaN).
+    We want to know: is the key the same as the original?
+*/
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T,
+    bool Is_Long_Double = false
+>
+__global__ void check_pairings(
+    const Key_T* keys_or, 
+    const Value_T* vals_or, 
+    const Key_T* keys_sor, 
+    const Value_T* vals_sor, 
+    Len_T n,
+    int* ok
+) {
+
+
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    using U = typename RTraits::unsigned_of;
+
+
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= n) {
+        return;
+    }
+
+    // This should not happen on ascending value data, something is wrong
+    if (vals_sor[i] >= n) {
+        atomicExch(ok, 0);
+        return;
+    }
+
+    // no need to twiddle for vals because they're indices here in the verification anyway
+    U keys_sor_i = RTraits::twiddle_in<false>(keys_sor[i]);
+    U keys_or_vals_sor_i = RTraits::twiddle_in<false>(keys_or[vals_sor[i]]);
+
+    // check pairings both ways
+    if (keys_sor_i != keys_or_vals_sor_i) {
+        atomicExch(ok, 0);
+        return;
+    }
+    if (vals_sor[i] != vals_or[vals_sor[i]]) {
+        atomicExch(ok, 0);
+        return;
+    }
+
+    // check stability
+    if (i < n - 1) {
+        U keys_sor_i1 = RTraits::twiddle_in<false>(keys_sor[i + 1]);
+
+        if ((keys_sor_i == keys_sor_i1) && (vals_sor[i] > vals_sor[i + 1])) {
+            atomicExch(ok, 0);
         }
     }
 }
@@ -867,7 +1031,14 @@ __device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
 
 
 // Main histogram kernel performaing a global count of all passes
-template <bool Descending, typename Lookback_T, typename Key_T, typename Len_T, bool DYNAMIC_WORK_STEAL = true>
+template <
+    bool Descending,
+    typename Lookback_T,
+    typename Key_T,
+    typename Len_T,
+    bool Is_Long_Double = false,
+    bool DYNAMIC_WORK_STEAL = true
+>
 __global__ void GHistogram_8bits(
     const Key_T* __restrict__ inputs,
     Len_T n,
@@ -876,7 +1047,7 @@ __global__ void GHistogram_8bits(
     uint32_t* __restrict__ counter) {
 
     using RT = radix_tuning<Key_T>;
-    using RTraits = radix_traits<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
     constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
@@ -886,11 +1057,12 @@ __global__ void GHistogram_8bits(
     constexpr uint32_t GHIST_ITEM_PER_BLOCK = H::GHIST_ITEM_PER_BLOCK;
     constexpr uint32_t SCAN256_WARPS = H::SCAN256_WARPS;
     constexpr uint32_t EXCLUSIVE_SCAN_256 = H::EXCLUSIVE_SCAN_256;
-    using U = get_unsigned_of<Key_T>;
+    using U = typename RTraits::unsigned_of;
 
 
     __shared__ uint32_t local_counters[RADIX_PASSES][RADIX_BIN_SIZE];
-    //if constexpr (EXCLUSIVE_SCAN_256) {
+    // TODOs: replace this?
+    // if constexpr (EXCLUSIVE_SCAN_256) {
     __shared__ uint32_t scan_warp_sums[SCAN256_WARPS];
     //}
 
@@ -1329,7 +1501,8 @@ __device__ RSORT_FORCEINLINE uint32_t cub_match_any_8_u32(uint32_t label) {
 }
 
 
-// This is pretty much the same kernel as CUB, just translated and simplified a bit
+// This is pretty much the same kernel as CUB
+// just translated and simplified a bit
 template<
     typename Key_T,
     typename Value_T = no_value_t,
@@ -1358,8 +1531,8 @@ struct Radix_Ranker {
         int (&ranks)[ITEMS_PER_THREAD],
         uint32_t bit_location,
         int& exclusive_digit_prefix,
-        uint16_t* bin_count,
-        volatile typename Lookback_Policy::T* lookBack_partial,
+        uint16_t* __restrict__ bin_count,
+        volatile typename Lookback_Policy::T* __restrict__ lookBack_partial,
         uint32_t block_index,
         uint32_t invalid_items,
         typename Lookback_Policy::T lookback_epoch_bits) {
@@ -1472,13 +1645,14 @@ template<
     typename Lookback_T,
     typename Len_T,
     typename Value_T = no_value_t,
-    bool Short_Mode = false
+    bool Short_Mode = false,
+    bool Is_Long_Double = false
 >
 struct Scatter {
 
 
     using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
-    using RTraits = radix_traits<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
     using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
     using Stage_Ind_T = typename RT::Stage_Ind_T;
 
@@ -1530,8 +1704,8 @@ struct Scatter {
         };
         uint16_t bin_count[RADIX_BIN_SIZE];     
         Lookback_T bin_offset[RADIX_BIN_SIZE];
-
-
+          
+        
         // Staging kernels
         __device__ RSORT_FORCEINLINE void stage_init(
             const U (&keys)[ITEMS_PER_THREAD],
@@ -1706,7 +1880,9 @@ does not seem like good practise.
 */
 
 
+
 // ============================ Main Kernels ==============================
+
 
 // Portable workspace struct for post-sort checks
 template <
@@ -1718,6 +1894,7 @@ template <
 >
 struct Sort_Workspace {
     using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
+    using LT = Lookback_T;
 
 
     Len_T num_blocks = 0;
@@ -1728,6 +1905,10 @@ struct Sort_Workspace {
     size_t off_gp = 0;
     size_t off_counter = 0;
     size_t off_look_partial = 0;
+
+    // variables reserved for post-sort verification
+    bool init_keys = false;
+    bool init_vals = false;
 
 
     struct View {
@@ -1780,6 +1961,44 @@ struct Sort_Workspace {
     }
 };
 
+/*
+template <
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T,
+    bool Short_Mode = false
+>
+static auto get_workspace(Len_T n) {
+    using Lookback_T = typename Lookback_Policy::T;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
+    Workspace ws = Workspace::template build<Lookback_Policy>(n);
+    return ws;
+}
+
+
+template <
+    typename Key_T,
+    typename Len_T,
+    typename Value_T
+>
+static auto generate_workspace(Len_T n) {
+
+    if (n <= LOW_N) {
+        return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, true>(n);
+    }
+
+    Lookback_Modes mode = get_lookback_mode(n); // according to array size
+
+    switch (mode) {
+        case Lookback_Modes::u32_epoch:
+            return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, false>(n);
+        case Lookback_Modes::u32_plain:
+            return get_workspace<Fast_LB_Policy, Key_T, Len_T, Value_T, false>(n);
+        case Lookback_Modes::u64_epoch: default:
+            return get_workspace<General_LB_Policy, Key_T, Len_T, Value_T, false>(n);
+    }
+}*/
 
 
 // Non-decoupled lookback path with early partial publication via chained callback
@@ -1791,7 +2010,8 @@ template<
     typename Key_T,
     typename Len_T,
     typename Value_T = no_value_t,
-    bool Short_Mode = false
+    bool Short_Mode = false,
+    bool Is_Long_Double = false
 >
 __global__ __launch_bounds__(radix_tuning<Key_T, Value_T, Short_Mode>::REORDER_THREADS)
 void onesweep_byte(
@@ -1809,13 +2029,13 @@ void onesweep_byte(
     
     using Lookback_T = typename Lookback_Policy::T;
     using LB = typename Lookback_Policy::conf;
-    using U = get_unsigned_of<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    using U = typename RTraits::unsigned_of;
     using Ranker = Radix_Ranker<Key_T, Value_T, Short_Mode>;
-    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T, Short_Mode>;
-
+    using Scatter = Scatter<Key_T, U, Lookback_T, Len_T, Value_T, Short_Mode, Is_Long_Double>;
     using RT = radix_tuning<Key_T, Value_T, Short_Mode>;
-    using RTraits = radix_traits<Key_T>;
     using Tuning_T = typename RT::Tuning_T;
+
     constexpr Tuning_T SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
     constexpr Tuning_T LOGICAL_BLOCK_SIZE = RT::REORDER_LOGICAL_BLOCK_SIZE;
     constexpr Tuning_T ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
@@ -1999,26 +2219,34 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 template <
     bool Descending,
     typename Lookback_Policy,
-    typename Key_T,
+    typename Key_T_tentative,
     typename Len_T,
     typename Value_T = no_value_t,
     bool Short_Mode = false
 >
 static void onesweep_byte_sort_enqueue(
     cudaStream_t stream,
-    Key_T* d_inout,
-    Key_T* d_tmp,
-    typename Lookback_Policy::T* d_gp,
+    Key_T_tentative* __restrict__ d_inout_keys,
+    Key_T_tentative* __restrict__ d_tmp_keys,
+    typename Lookback_Policy::T* __restrict__ d_gp,
     uint32_t* d_counter,
-    typename Lookback_Policy::T* d_look_partial,
+    typename Lookback_Policy::T* __restrict__ d_look_partial,
     Len_T n,
     Len_T num_blocks,
     size_t lb_els,
-    Value_T* d_inout_vals = nullptr,
-    Value_T* d_tmp_vals = nullptr
+    Value_T* __restrict__ d_inout_vals = nullptr,
+    Value_T* __restrict__ d_tmp_vals = nullptr
 ) {
 
 
+    // reinterpret input if sorting 128-bit long doubles
+    // (CUDA doesn't support those)
+    constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T_tentative>();
+    using Key_T = native_128bit_support::try_valid_long_double_t<Key_T_tentative>;
+    Key_T* d_inout = reinterpret_cast<Key_T*>(d_inout_keys);
+    Key_T* d_tmp = reinterpret_cast<Key_T*>(d_tmp_keys);
+
+    // normal aliasing
     using LB = typename Lookback_Policy::conf;
     using Lookback_T = typename Lookback_Policy::T;
     constexpr bool lb_epoch = Lookback_Policy::epoch;
@@ -2052,7 +2280,7 @@ static void onesweep_byte_sort_enqueue(
 
     // Histogram call - template on dynamic work stealing (using lookback type for compile time branching)
     if constexpr (sizeof(Lookback_T) <= sizeof(uint32_t)) {
-        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, true>
+        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, true>
         <<<HIST_BLOCKS, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     } else {
         uint32_t h_blocks = HIST_BLOCKS;
@@ -2060,7 +2288,7 @@ static void onesweep_byte_sort_enqueue(
         if (h_blocks > hist_tiles) {
             h_blocks = hist_tiles;
         }
-        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, false>
+        GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, false>
         <<<h_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     }
 
@@ -2107,7 +2335,7 @@ static void onesweep_byte_sort_enqueue(
         }
 
         // onesweep entry
-        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode>
+        onesweep_byte<Descending, Lookback_Policy, Key_T, Len_T, Value_T, Short_Mode, is_ld>
         <<<num_blocks, REORDER_THREADS, 0, stream>>>(
             in, out, n, d_gp, look_partial_pass, it, lb_bits, in_vals, out_vals
         );
@@ -2145,11 +2373,11 @@ template <
     bool Short_Mode = false
 >
 static void onesweep_byte_sort_impl(
-    Key_T* d_inout,
+    Key_T* __restrict__ d_inout,
     size_t* temp_bytes,
-    uint8_t* d_workspace, 
+    uint8_t* __restrict__ d_workspace, 
     Len_T n,
-    Value_T* d_inout_vals = nullptr,
+    Value_T* __restrict__ d_inout_vals = nullptr,
     cudaStream_t stream = 0
 ) {
 
@@ -2261,7 +2489,7 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamDestroy(capture_stream);
         return;
     }
-
+    
     looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
         d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
     );
@@ -2365,71 +2593,14 @@ static inline void onesweep_byte_sort_pairs_descending(
 
 // ========================= Benchmark Kernels ============================
 
-// Reconstructs the digit histogram for the last pass and checks count of each radix
-// in the sorted array to assert if sorted output has the same counts.
-template <
-    bool Descending,
-    typename Lookback_Policy,
-    typename Key_T,
-    typename Len_T,
-    typename Value_T = no_value_t,
-    bool Short_Mode = false
->
-static bool verify_digit_histograms_preserved(
-    const Key_T* d_sorted,
-    uint8_t* d_workspace,
+template <typename Lookback_T, typename Len_T>
+static bool check_hist_buffers(
     Len_T n,
-    uint32_t seed,
-    Array_Modes arr_mode
+    const Lookback_T* h_hist_ref,
+    const Lookback_T* h_hist_chk,
+    const uint32_t RADIX_PASSES,
+    const uint32_t RADIX_BIN_SIZE
 ) {
-
-
-    using Lookback_T = typename Lookback_Policy::T;
-    using RT = radix_tuning<Key_T, Value_T>;
-    constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
-    constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
-    constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
-    using H = histogram_tuning;
-    constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
-    constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
-    
-
-    Lookback_T* d_hist_ref = nullptr;
-    Lookback_T* d_hist_chk = nullptr;
-    uint32_t* d_counter = nullptr;
-    Lookback_T h_hist_ref[HIST_ELEMS];
-    Lookback_T h_hist_chk[HIST_ELEMS];
-
-    CHECK_CUDA(cudaMalloc(&d_hist_ref, HIST_ELEMS * sizeof(Lookback_T)));
-    CHECK_CUDA(cudaMalloc(&d_hist_chk, HIST_ELEMS * sizeof(Lookback_T)));
-    CHECK_CUDA(cudaMalloc(&d_counter, sizeof(uint32_t)));
-
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
-    Workspace ws = Workspace::template build<Lookback_Policy>(n);
-    auto workspace_view = ws.bind(d_workspace);
-
-    CHECK_CUDA(cudaMemset(d_hist_ref, 0, HIST_ELEMS * sizeof(Lookback_T)));
-    CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
-    init_keys<Key_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(workspace_view.tmp, n, seed, arr_mode);
-    CHECK_CUDA(cudaGetLastError());
-    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T>
-    <<<HIST_BLOCKS, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
-    CHECK_CUDA(cudaGetLastError());
-
-    CHECK_CUDA(cudaMemset(d_hist_chk, 0, HIST_ELEMS * sizeof(Lookback_T)));
-    CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
-    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T>
-    <<<HIST_BLOCKS, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
-    CHECK_CUDA(cudaGetLastError());
-
-    CHECK_CUDA(cudaMemcpy(h_hist_ref, d_hist_ref, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_hist_chk, d_hist_chk, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost));
-
-
-    CHECK_CUDA(cudaFree(d_counter));
-    CHECK_CUDA(cudaFree(d_hist_chk));
-    CHECK_CUDA(cudaFree(d_hist_ref));
-
     // TODOs: change (b + 1u < RADIX_BIN_SIZE) ? ref[b + 1u] : (Lookback_T)n;
     // to be ref[b + 1u] and do RADIX_BIN_SIZE - 1
     for (uint32_t p = 0; p < RADIX_PASSES; ++p) {
@@ -2443,51 +2614,423 @@ static bool verify_digit_histograms_preserved(
             Lookback_T ref_count = ref_hi - ref_lo;
             Lookback_T chk_count = chk_hi - chk_lo;
             if (ref_count != chk_count) {
-                printf("digit-count mismatch at pass %u bin %u: input=%llu output=%llu\n",
-                    p, b,
+                printf(
+                    "digit-count mismatch at pass %u bin %u: input=%llu output=%llu\n",
+                    p,
+                    b,
                     (unsigned long long)ref_count,
-                    (unsigned long long)chk_count);
+                    (unsigned long long)chk_count
+                );
                 return false;
+                break; // double
             }
         }
     }
-
     return true;
 }
 
 
-// TODOs: rewrite this
-// Verify histogram according to mode
-template <bool Descending, typename Key_T, typename Len_T, typename Value_T = no_value_t>
-static bool verify_hist_by_mode(
-    Lookback_Modes mode,
-    Array_Modes arr_mode,
-    const Key_T* d_keys,
+// Reconstructs the digit histogram for the last pass and checks count of each radix
+// in the sorted array to assert if sorted output has the same counts.
+template <
+    bool Descending,
+    typename Lookback_Policy,
+    typename Workspace,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Is_Long_Double = false
+>
+static bool verify_digit_histograms(
+    Key_T* d_sorted, // Key_T_tentative
     uint8_t* d_workspace,
     Len_T n,
-    uint32_t seed)  {
+    uint32_t seed,
+    Array_Modes arr_mode,
+    Workspace* ws,
+    bool validation,
+    bool timing = false
+) {
 
-    if (n <= LOW_N) {
-        return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, true>(
-            d_keys, d_workspace, n, seed, arr_mode);
+
+    using Lookback_T = typename Lookback_Policy::T;
+    //using Lookback_T = typename ws::LT;
+    using RT = radix_tuning<Key_T, Value_T>;
+    constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
+    constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
+    constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
+    using H = histogram_tuning;
+    constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
+    constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
+    
+
+    // timers
+    cudaEvent_t start, stop;
+    if (timing) {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start);
     }
 
-    switch (mode) {
-        case Lookback_Modes::u32_epoch:
-            return verify_digit_histograms_preserved<Descending, Faster_LB_Policy, Key_T, Len_T, Value_T, false>(
-                d_keys, d_workspace, n, seed, arr_mode);
-        case Lookback_Modes::u32_plain:
-            return verify_digit_histograms_preserved<Descending, Fast_LB_Policy, Key_T, Len_T, Value_T, false>(
-                d_keys, d_workspace, n, seed, arr_mode);
-        case Lookback_Modes::u64_epoch:
-            return verify_digit_histograms_preserved<Descending, General_LB_Policy, Key_T, Len_T, Value_T, false>(
-                d_keys, d_workspace, n, seed, arr_mode);
+    // Declare buffers
+    Lookback_T* d_hist_ref = nullptr;
+    Lookback_T* d_hist_chk = nullptr;
+    uint32_t* d_counter = nullptr;
+    Lookback_T h_hist_ref[HIST_ELEMS];
+    Lookback_T h_hist_chk[HIST_ELEMS];
+
+    // Initialize buffers
+    CHECK_CUDA(cudaMalloc(&d_hist_ref, HIST_ELEMS * sizeof(Lookback_T)));
+    CHECK_CUDA(cudaMalloc(&d_hist_chk, HIST_ELEMS * sizeof(Lookback_T)));
+    CHECK_CUDA(cudaMalloc(&d_counter, sizeof(uint32_t)));
+    CHECK_CUDA(cudaMemset(d_hist_ref, 0, HIST_ELEMS * sizeof(Lookback_T)));
+    CHECK_CUDA(cudaMemset(d_hist_chk, 0, HIST_ELEMS * sizeof(Lookback_T)));
+    CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
+
+    auto workspace_view = ws->bind(d_workspace);
+    if (!ws->init_keys) {
+        init_keys<Key_T, Len_T, Is_Long_Double><<<div_round_up<Len_T>(n, 256), 256>>>(
+            workspace_view.tmp, n, seed, arr_mode
+        );
+        CHECK_CUDA(cudaGetLastError());
+        ws->init_keys = true;
     }
-    return false;
+    
+    // Count digits from both arrays (original and sorted)
+    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, Is_Long_Double>
+    <<<HIST_BLOCKS, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
+    GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, Is_Long_Double>
+    <<<HIST_BLOCKS, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
+    CHECK_CUDA(cudaGetLastError());
+
+    // Copy to CPU
+    CHECK_CUDA(cudaMemcpy(
+        h_hist_ref, d_hist_ref, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost)
+    );
+    CHECK_CUDA(cudaMemcpy(
+        h_hist_chk, d_hist_chk, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost)
+    );
+
+    // Free CUDA buffers
+    CHECK_CUDA(cudaFree(d_counter));
+    CHECK_CUDA(cudaFree(d_hist_chk));
+    CHECK_CUDA(cudaFree(d_hist_ref));
+
+    // Check if both histogram count buffers are equal
+    bool h_ok = check_hist_buffers<Lookback_T>(n, h_hist_ref, h_hist_chk, RADIX_PASSES, RADIX_BIN_SIZE);
+
+    // stop timing
+    float ms_total;
+    if (timing) {
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        
+        ms_total = 0.0f;
+        CHECK_CUDA(cudaEventElapsedTime(&ms_total, start, stop));
+        CHECK_CUDA(cudaGetLastError());
+    }
+
+    // print stats
+    if (!validation) {
+        if (timing) {
+            printf("digit counts ok? %s (%.3f ms)\n", h_ok ? "YES" : "NO", ms_total);
+        } else {
+            printf("digit counts ok? %s\n", h_ok ? "YES" : "NO");
+        }
+    }
+
+    return h_ok;
 }
 
 
-// Benchmarking function (entry point of the sort)
+template <
+    bool Descending,
+    typename Workspace,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T,
+    bool Is_Long_Double = false
+>
+static bool verify_kv_pairings(
+    Key_T* d_sorted_keys,
+    Value_T* d_sorted_vals,
+    uint8_t* d_workspace,
+    Len_T n,
+    uint32_t seed,
+    Array_Modes arr_mode,
+    Workspace *ws,
+    bool validation,
+    bool timing = false
+) {
+
+    // timers
+    cudaEvent_t start, stop;
+    if (timing) {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start);
+    }
+
+    // init original keys and vals
+    auto workspace_view = ws->bind(d_workspace);
+    if (!ws->init_keys) {
+        init_keys<Key_T, Len_T, Is_Long_Double><<<div_round_up<Len_T>(n, 256), 256>>>(
+            workspace_view.tmp, n, seed, arr_mode
+        );
+        CHECK_CUDA(cudaGetLastError());
+        ws->init_keys = true;
+    }
+    if (!ws->init_vals) {
+        init_keys<Value_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
+            workspace_view.tmp_vals,
+            n,
+            seed,
+            Array_Modes::asc
+        );
+        CHECK_CUDA(cudaGetLastError());
+        ws->init_vals = true;
+    }
+
+    // check actual pairings
+    int* d_ok = nullptr;
+    int temp = 1;
+    CHECK_CUDA(cudaMalloc(&d_ok, sizeof(int)));
+    CHECK_CUDA(cudaMemcpy(d_ok, &temp, sizeof(int), cudaMemcpyHostToDevice));
+    Len_T check_blocks = div_round_up<Len_T>(n, 256);
+    check_pairings<Descending, Key_T, Len_T, Value_T, Is_Long_Double><<<check_blocks, 256>>>(
+        workspace_view.tmp,
+        workspace_view.tmp_vals,
+        d_sorted_keys,
+        d_sorted_vals,
+        n, 
+        d_ok);
+    int h_ok = 0;
+    CHECK_CUDA(cudaMemcpy(&h_ok, d_ok, sizeof(int), cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaFree(d_ok));
+
+    // stop timing
+    float ms_total;
+    if (timing) {
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        
+        ms_total = 0.0f;
+        CHECK_CUDA(cudaEventElapsedTime(&ms_total, start, stop));
+        CHECK_CUDA(cudaGetLastError());
+    }
+
+    // print stats
+    if (!validation) {
+        if (timing) {
+            printf("pairs counts ok? %s (%.3f ms)\n", h_ok ? "YES" : "NO", ms_total);
+        } else {
+            printf("pairs counts ok? %s\n", h_ok ? "YES" : "NO");
+        }
+    }
+
+    return h_ok; 
+}
+
+
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    bool Is_Long_Double = false
+>
+static bool verify_order(
+    Key_T* d_keys,
+    Len_T n,
+    bool validation,
+    bool timing = false
+) {
+
+    // timers
+    cudaEvent_t start, stop;
+    if (timing) {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start);
+    }
+
+    // initialize data
+    int* d_ok = nullptr;
+    int temp = 1;
+    CHECK_CUDA(cudaMalloc(&d_ok, sizeof(int)));
+    CHECK_CUDA(cudaMemcpy(d_ok, &temp, sizeof(int), cudaMemcpyHostToDevice));
+
+    // call verify kernel
+    Len_T check_blocks = div_round_up<Len_T>(n, 256);
+    check_sorted<Descending, Key_T, Is_Long_Double><<<check_blocks, 256>>>(
+        d_keys, n, d_ok
+    );
+    CHECK_CUDA(cudaGetLastError());
+    
+    // result
+    int h_ok = 0;
+    CHECK_CUDA(cudaMemcpy(&h_ok, d_ok, sizeof(int), cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaFree(d_ok));
+
+    // stop timing
+    float ms_total;
+    if (timing) {
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        
+        ms_total = 0.0f;
+        CHECK_CUDA(cudaEventElapsedTime(&ms_total, start, stop));
+        CHECK_CUDA(cudaGetLastError());
+    }
+
+    // print stats
+    if (!validation) {
+        if (timing) {
+            printf("\nsorted ok? %s (%.3f ms)\n", h_ok ? "YES" : "NO", ms_total);
+        } else {
+            printf("\nsorted ok? %s\n", h_ok ? "YES" : "NO");
+        }
+    }
+
+    return h_ok;
+}
+
+
+template <typename T, typename Len_T>
+static bool can_validate_pair(bool validation, Len_T n) {
+    return validation && 
+        ((sizeof(T) == 8) || 
+        ((sizeof(T) == 4) && (n < std::numeric_limits<uint32_t>::max())));
+}
+
+
+template<
+    bool Descending,
+    typename Lookback_Policy,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T,
+    bool Short_Mode,
+    bool Is_Long_Double = false
+>
+static bool verify_sorted_policy(
+    Key_T* d_keys,
+    Value_T* d_vals,
+    uint8_t* d_workspace,
+    Len_T n,
+    uint32_t seed,
+    Array_Modes arr_mode,
+    bool validation
+) {
+
+
+    constexpr bool SORTING_PAIRS = !std::is_same_v<Value_T, no_value_t>;
+    using Lookback_T = typename Lookback_Policy::T;
+    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
+
+    
+    // build workspace
+    Workspace ws = Workspace::template build<Lookback_Policy>(n);
+
+    // verify order
+    bool order_ok = verify_order<
+        Descending, Key_T, Len_T, Is_Long_Double
+    >(d_keys, n, validation, true);
+
+    // verify histogram
+    bool hist_ok = verify_digit_histograms<
+        Descending, Lookback_Policy, Workspace, Key_T, Len_T, Value_T, Is_Long_Double
+    >(d_keys, d_workspace, n, seed, arr_mode, &ws, validation, false);
+
+    // verify pairings
+    bool pairs_ok = true;
+    // stupid, but the second check is redeundant, only there for compilation purposes 
+    if constexpr (SORTING_PAIRS && (sizeof(Value_T) <= 8)) {
+        if (can_validate_pair<Value_T, Len_T>(validation, n)) {
+            pairs_ok = verify_kv_pairings<
+                Descending, Workspace, Key_T, Len_T, Value_T, Is_Long_Double
+            >(d_keys, d_vals, d_workspace, n, seed, arr_mode, &ws, validation, false);
+        }
+    }
+
+    bool ret = order_ok && hist_ok && pairs_ok;
+    if(!ret) {
+        printf("Post sort checks [order, hist, pair]: [%d, %d, %d]\n", order_ok, hist_ok, pairs_ok);
+    }
+
+    return ret;
+}
+
+
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t,
+    bool Is_Long_Double = false
+>
+static bool verify_sorted(
+    Key_T* d_keys,
+    Value_T* d_vals,
+    uint8_t* d_workspace,
+    Len_T n,
+    uint32_t seed,
+    Array_Modes arr_mode,
+    bool validation
+) {
+
+    if (n <= LOW_N) {
+        return verify_sorted_policy<
+            Descending,
+            Faster_LB_Policy,
+            Key_T,
+            Len_T,
+            Value_T,
+            true,
+            Is_Long_Double
+        >(d_keys, d_vals, d_workspace, n, seed, arr_mode, validation);
+    }
+
+    Lookback_Modes mode = get_lookback_mode(n); 
+
+    switch (mode) {
+        case Lookback_Modes::u32_epoch:
+            return verify_sorted_policy<
+                Descending,
+                Faster_LB_Policy,
+                Key_T,
+                Len_T,
+                Value_T,
+                false,
+                Is_Long_Double
+            >(d_keys, d_vals, d_workspace, n, seed, arr_mode, validation);
+
+        case Lookback_Modes::u32_plain:
+            return verify_sorted_policy<
+                Descending,
+                Fast_LB_Policy,
+                Key_T,
+                Len_T,
+                Value_T,
+                false,
+                Is_Long_Double
+            >(d_keys, d_vals, d_workspace, n, seed, arr_mode, validation);
+
+        case Lookback_Modes::u64_epoch: default:
+            return verify_sorted_policy<
+                Descending,
+                General_LB_Policy,
+                Key_T,
+                Len_T,
+                Value_T,
+                false,
+                Is_Long_Double
+            >(d_keys, d_vals, d_workspace, n, seed, arr_mode, validation);
+    }
+}
+
+
 template<
     bool Descending,
     typename Key_T,
@@ -2502,6 +3045,7 @@ int benchmark(
     Array_Modes arr_mode,
     bool validation = false
 ) {
+
 
     using ull_t = long long unsigned int;
     uint32_t SORT_BLOCK_SIZE;
@@ -2529,41 +3073,54 @@ int benchmark(
     [[maybe_unused]] Value_T* d_vals = nullptr;
     uint8_t* d_workspace = nullptr;
     
-
+    // launcher for API calls
     auto launch_sorting_kernel = [&]() {
 
         if constexpr (SORTING_PAIRS) {
             if constexpr (Descending) {
-                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(
+                    d_keys, d_vals, &temp_bytes, d_workspace, n
+                );
             } else {
-                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(
+                    d_keys, d_vals, &temp_bytes, d_workspace, n
+                );
             }
         } else {
             if constexpr (Descending) {
-                onesweep_byte_sort_descending<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort_descending<Key_T, Len_T>(
+                    d_keys, &temp_bytes, d_workspace, n
+                );
             } else {
-                onesweep_byte_sort<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+                onesweep_byte_sort<Key_T, Len_T>(
+                    d_keys, &temp_bytes, d_workspace, n
+                );
             }
         }
 
     };
-
     
     // do not time memory allocations
+    size_t vals_bytes = 0;
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
     if constexpr (SORTING_PAIRS) {
-        CHECK_CUDA(cudaMalloc(&d_vals, align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n))); // 
+        // align values up n bytes 
+        vals_bytes = align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n);
+        CHECK_CUDA(cudaMalloc(&d_vals, vals_bytes));
     }
     launch_sorting_kernel();
-    if (BENCH_DEBUG) {
+
+    // optional debug
+    if constexpr (BENCH_DEBUG) {
         printf(
             "n: %llu, key size: %llu, val size: %llu, temp_bytes requested: %llu\n",
             (ull_t)n,
             (ull_t)sizeof(Key_T) * n,
-            (ull_t)(SORTING_PAIRS ? align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) : 0), 
+            (ull_t)(SORTING_PAIRS ? vals_bytes : 0),
             (ull_t)temp_bytes
         );
     }
+    
     CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
     CHECK_CUDA(cudaGetLastError());
 
@@ -2572,16 +3129,36 @@ int benchmark(
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
+    // CUDA long double support
+    using Key_T_Sort = native_128bit_support::try_valid_long_double_t<Key_T>;
+    constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T>();
+    Key_T_Sort* d_keys_sort = reinterpret_cast<Key_T_Sort*>(d_keys);
+
     // define sorting iteration
     auto run_timed_iteration = [&](uint32_t seed) {
-        init_keys<Key_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(d_keys, n, seed, arr_mode);
+        
+        init_keys<Key_T_Sort, Len_T, is_ld><<<div_round_up<Len_T>(n, 256), 256>>>(
+            d_keys_sort, n, seed, arr_mode
+        );
         if constexpr (SORTING_PAIRS) {
-            init_keys<uint32_t, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
-                (uint32_t *)d_vals,
-                align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n) / sizeof(uint32_t),
-                seed,
-                arr_mode
-            );
+
+            if (can_validate_pair<Value_T, Len_T>(validation, n)) {
+                init_keys<Value_T, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
+                    d_vals,
+                    n,
+                    seed,
+                    Array_Modes::asc
+                );
+            } else {
+                uint32_t* d_vals_sort = reinterpret_cast<uint32_t*>(d_vals);
+                init_keys<uint32_t, Len_T><<<div_round_up<Len_T>(n, 256), 256>>>(
+                    d_vals_sort,
+                    vals_bytes / sizeof(uint32_t),
+                    seed,
+                    arr_mode
+                );
+            }
+
         }
         CHECK_CUDA(cudaGetLastError());
 
@@ -2626,8 +3203,11 @@ int benchmark(
     cudaGetDevice(&device);
     cudaGetDeviceProperties(&prop, device);
 
-
-    std::string_view sv_temp = type_name<Key_T>();
+    // print main stats
+    std::string sv_temp = std::string(type_name<Key_T>());
+    if constexpr (std::is_same_v<Key_T, long double>) {
+        sv_temp += " (" + std::to_string(sizeof(Key_T) * 8) + " bits)";
+    }
     std::string_view svt_temp = type_name<Value_T>();
     if (!validation) {
         printf(
@@ -2667,50 +3247,19 @@ int benchmark(
     }
     
     Lookback_Modes mode = get_lookback_mode(n);
+
     if (!validation) {
         print_lookback_policy(mode);
     }
 
-    // check if sorted
-    cudaEventRecord(start);
-    
-    int* d_ok = nullptr;
-    int temp = 1;
-    CHECK_CUDA(cudaMalloc(&d_ok, sizeof(int)));
-    CHECK_CUDA(cudaMemcpy(d_ok, &temp, sizeof(int), cudaMemcpyHostToDevice));
-
-    Len_T check_blocks = div_round_up<Len_T>(n, 256);
-    check_sorted<Descending, Key_T><<<check_blocks, 256>>>(d_keys, n, d_ok);
-
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    
-    float ms_total = 0.0f;
-    CHECK_CUDA(cudaEventElapsedTime(&ms_total, start, stop));
-    CHECK_CUDA(cudaGetLastError());
-
-    int h_ok = 0;
-    CHECK_CUDA(cudaMemcpy(&h_ok, d_ok, sizeof(int), cudaMemcpyDeviceToHost));
-    if (!validation) {
-        printf("\nsorted ok? %s (%.3f ms)\n", h_ok ? "YES" : "NO", ms_total);
-    }
-
-    // check histograms 
+    // post sort verification
     uint32_t last_seed = (uint32_t)(set_seed_radix(seed_counter - 1));
-    bool hist_ok = false;
+    bool bench_valid = verify_sorted<Descending, Key_T_Sort, Len_T, Value_T, is_ld>(
+        d_keys_sort, d_vals, d_workspace, n, last_seed, arr_mode, validation
+    );
 
-    if (Descending) {
-        hist_ok = verify_hist_by_mode<true, Key_T, Len_T, Value_T>(
-            mode, arr_mode, d_keys, d_workspace, n, last_seed);
-    } else {
-        hist_ok = verify_hist_by_mode<false, Key_T, Len_T, Value_T>(
-            mode, arr_mode, d_keys, d_workspace, n, last_seed);
-    }
-
-    int bench_valid = hist_ok && h_ok;
-    if (!validation) {
-        printf("digit counts ok? %s\n", hist_ok ? "YES" : "NO");
-    } else {
+    // verification stats
+    if (validation) {
         std::string pair_str = "Pair: " + std::string(svt_temp) + ",";
         printf(
             "Sorting %llu els "
@@ -2731,7 +3280,6 @@ int benchmark(
     }
 
     // cleanup
-    CHECK_CUDA(cudaFree(d_ok));
     CHECK_CUDA(cudaEventDestroy(start));
     CHECK_CUDA(cudaEventDestroy(stop));
     CHECK_CUDA(cudaFree(d_workspace));
@@ -2803,15 +3351,21 @@ Validation_Result validate_radix_type(
     uint32_t bit_end = max_array_bits(vram_gb, size_el);
     uint32_t bit_start = bit_end - 10;
 
-    for (int i = (int)bit_start; i <= (int)bit_end; ++i) {
+    // small array tests indices [1, small_tests]
+    const int small_tests = 3;
+    static const uint64_t pow10[] = {1ull, 10ull, 100ull, 1000ull};
+
+    for (int i = (int)bit_start - small_tests; i <= (int)bit_end; ++i) {
         
-        uint64_t n = 1ull << i;
+        uint64_t n = (i < bit_start) ? (pow10[bit_start - i]) : (1ull << i);
         int pass_ok;
+
         if (descending) {
             pass_ok = benchmark<true, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         } else {
             pass_ok = benchmark<false, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         }
+
         result.add(pass_ok);
 
         if (!pass_ok) {
@@ -2926,4 +3480,3 @@ bool validate(bool all_modes, bool desc, int iter, int warm) {
 }
 
 } // namespace rsort
-

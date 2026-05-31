@@ -24,12 +24,15 @@ The implementation is based on CUB's DeviceRadixSort. It is stable, using a 8-bi
 - Key-value pair sorting
 - Support for 128-bit keys <sup>3</sup>
 
-<sup>1</sup> Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
+<sup>1</sup> Support for all standard C++ types, including 64-bit and 128-bit **long doubles** (according to compiler defined size). 
+80-bit precison **long double** representations are supported as long as the **sizeof()** reported by the compiler is 8 bytes (128-bit).
+
+Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
 This is the same idea CUB uses. Support for descending sorting is achieved using the same principle: by simply inverting the bit representation during reordering.
 
-<sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurt performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even at 32 bits.
+<sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurt performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even with 32 bits counters.
 
-<sup>3</sup> Except for long doubles (not supported by CUDA)
+<sup>3</sup> Including **long doubles**.
 
 
 ### Assumptions and missing features (different from CUB):
@@ -303,7 +306,11 @@ Standard deviations for CUB seem to hint towards less jitter than rsort for this
 
 ## Validation
 
-To ensure the correctness of the implementation, a validation suite is provided to test sorting across a range of different scenarios. A full validation run consists of sorting arrays of all data types, for every array mode (random and byte-skipped initialization) and sort orders (ascending and descending). Array sizes span from the largest power of 2 that fits the GPU VRAM (including workspace memory), down through 11 successive halvings. The full validation includes the follwing data types: ```uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double```, for a total of 440 tests. Each test performs order checks on the elements, but also radix count checks over the whole array.
+To ensure the correctness of the implementation, a validation suite is provided to test sorting across a range of different scenarios. A full validation run consists of sorting arrays of all data types, for every array mode (random and byte-skipped initialization) and sort orders (ascending and descending). Array sizes span from the largest power of 2 that fits the GPU VRAM (including workspace memory), down through 11 successive halvings. There are also tests for smaller arrays with as little as 10 elements.
+
+The full validation includes the follwing data types: ```uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double``` for every plataform, with the addition of ```long double, __int128 and unsigned __int128``` for GCC/Clang, totalling 6552 test cases (on Linux).
+
+Each test performs order checks on the sorted elements (manifested value), radix count histogram checks over the whole array, as well as pairing and stability checks (through unisgned/identity values) when sorting Key-Value pairs with indices for value data.
 
 ### Example validation run:
 ```bash
@@ -314,7 +321,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 ### Notes (READ!):
 
 - Full validation was run on Ubuntu 24.04 LTS and Windows 11.
-- Due to heavy template instantiation, validation is disabled by default. The toggle is the single "VALIDATION_TEST" macro at the start of the main file.
+- Due to heavy template instantiation, validation is disabled by default, as it can take over 2 minutes, even on modern CPUs. The toggle is the single "VALIDATION_TEST" macro at the start of the main file. However, normal "one type, one scenario" compilation shouldn't take more than a few seconds at most.
 - You can use the macros at the start of [validate_sort.cuh](validate_sort.cuh) to change the set of data types to check validation for. Some other standard subsets are provided, or you can define your own.
 
 ## Failed Experiments
@@ -327,11 +334,11 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 ## Releases
 
-Checklist of standardization efforts for all releases from version v0.2.0 onwards:
+Checklist of standardization efforts for all major vN.N releases from version v0.2.0 onwards:
 
   - Validation suite passes all test in both Windows (MSVC) and Linux (gcc):
-      - Linux: 3168/3168 tests passed (signed and unsigned 128-bit integers).
-      - Windows: 2200/2200 tests passed.
+      - Linux: 6552/6552 tests passed (long doubles, signed and unsigned 128-bit integers).
+      - Windows: N/M tests passed.
   - Compilation of all templating (validation) must return no warnings with both `-std=c++17` and `-std=c++20` flag standards, for Windows (MSVC), and for Linux (gcc).
   - Updated [monolithic header](monolithic/rsort.cuh).
   <!-- - Updated benchmarking data. -->
@@ -347,8 +354,7 @@ Checklist of standardization efforts for all releases from version v0.2.0 onward
 
 ## TODOs
 
-- Implmenting pairs and other features for completeness.
-- Investigate performance for arrays smaller than 32 than 2<sup>20</sup> elements. Preliminary testing seems to indicate performance continues to scale down, but 64 bits still seems to be an issue.
+- Investigate performance for arrays smaller than 2<sup>20</sup> elements. Preliminary testing seems to indicate performance continues to scale down.
 - Investigate integrating or aligning with benchmarking approaches used in NVIDIA/cccl to improve consistency. I wasn't aware of the bench suite when writing this benchmark.
 - **Optimizations**: Some ideas for ranker work distribution still to test; lookback configurations; improve memory alignment overall; etc. 
   
