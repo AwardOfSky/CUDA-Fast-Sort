@@ -191,7 +191,7 @@ Configuration used for all  experiments:
     	- **Build** - cuda_13.1.r13.1/compiler.37061995_0
 	- **Driver** - 580.126.09
 	- **OS** - Ubuntu 24.04.4 LTS x86_64
-	- **Kernel** - 6.17.0-22-generic
+	- **Kernel** - 6.17.0-29-generic
 - **Compilation:**
 	- **nvcc flags** - -O3 -arch=sm_86
 
