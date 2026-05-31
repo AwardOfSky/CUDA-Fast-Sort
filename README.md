@@ -306,7 +306,7 @@ Standard deviations for CUB seem to hint towards less jitter than rsort for this
 
 ## Validation
 
-To ensure the correctness of the implementation, a validation suite is provided to test sorting across a range of different scenarios. A full validation run consists of sorting arrays of all data types, for every array mode (random and byte-skipped initialization) and sort orders (ascending and descending). Array sizes span from the largest power of 2 that fits the GPU VRAM (including workspace memory), down through 11 successive halvings. There are also tests for smaller arrays with as little as 10 elements.
+To ensure the correctness of the implementation, a validation suite is provided to test sorting across a range of different scenarios. A full validation run consists of sorting arrays of all data types, for every array mode (random, byte-skipped initialization and ascending order) and sort orders (ascending and descending). Array sizes span from the largest power of 2 that fits the GPU VRAM (including workspace memory), down through 11 successive halvings. There are also tests for smaller arrays with as little as 10 elements.
 
 The full validation includes the follwing data types: ```uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double``` for every plataform, with the addition of ```long double, __int128 and unsigned __int128``` for GCC/Clang, totalling 6552 test cases (on Linux).
 
