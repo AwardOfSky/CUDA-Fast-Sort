@@ -3376,14 +3376,14 @@ int benchmark(
     bool validation = false
 ) {
 
-    Benchmark_Context<Descending, Key_T, Len_T, Value_T> ctx{
-        .n = n,
-        .iters = iters,
-        .warmups = warmups,
-        .warm_ms = warm_ms,
-        .validation = validation,
-        .arr_mode = arr_mode,
-    };
+    // Boring C++17 init
+    Benchmark_Context<Descending, Key_T, Len_T, Value_T> ctx{};
+    ctx.n = n;
+    ctx.iters = iters;
+    ctx.warmups = warmups;
+    ctx.warm_ms = warm_ms;
+    ctx.validation = validation;
+    ctx.arr_mode = arr_mode;
     
     ctx.init_bench_tuning();
     ctx.init_dev_properties();
