@@ -35,6 +35,7 @@
 #include <string_view>
 
 #if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
 #else
     #include <time.h>
@@ -44,10 +45,12 @@
 // ============================== User knobs ==============================
 
 // (check validation types below)
-#define VALIDATION_TEST                 0
+#define VALIDATION_TEST                 1
 #define PAIR_VALIDATION                 1
 #define LONG_DOUBLE_VALIDATION          1
 #define U128_BIT_VALIDATION             1
+// in ms 
+#define COOL_BETWEEN_RUNS               0.0
 
 #define FORCE_32BIT_STAGING             1
 #define STAGE_KEYS_OVERRIDE             staging_modes::automatic
@@ -106,9 +109,9 @@
 // ================================================================
 
 #if defined(_MSC_VER)
-  #define RSORT_FORCEINLINE __forceinline
+    #define RSORT_FORCEINLINE __forceinline
 #else
-  #define RSORT_FORCEINLINE __inline__ __attribute__((__always_inline__))
+    #define RSORT_FORCEINLINE __inline__ __attribute__((__always_inline__))
 #endif
 
 #define WARP_SIZE       32
@@ -826,16 +829,6 @@ __global__ void check_sorted(const T* a, size_t n, int* ok) {
             }
         }
     }
-}
-
-
-template <typename T, bool Is_Long_Double = false>
-__device__ T correct_ld(T val) {
-    using RTraits = radix_traits<T, Is_Long_Double>;
-    if constexpr (Is_Long_Double) {
-        return (T)RTraits::twiddle_in<false>(val);
-    }
-    return val;
 }
 
 
@@ -1890,9 +1883,7 @@ does not seem like good practise.
 */
 
 
-
 // ============================ Main Kernels ==============================
-
 
 // Portable workspace struct for post-sort checks
 template <
@@ -1971,49 +1962,13 @@ struct Sort_Workspace {
     }
 };
 
-/*
-template <
-    typename Lookback_Policy,
-    typename Key_T,
-    typename Len_T,
-    typename Value_T,
-    bool Short_Mode = false
->
-static auto get_workspace(Len_T n) {
-    using Lookback_T = typename Lookback_Policy::T;
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
-    Workspace ws = Workspace::template build<Lookback_Policy>(n);
-    return ws;
-}
-
-
-template <
-    typename Key_T,
-    typename Len_T,
-    typename Value_T
->
-static auto generate_workspace(Len_T n) {
-
-    if (n <= LOW_N) {
-        return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, true>(n);
-    }
-
-    Lookback_Modes mode = get_lookback_mode(n); // according to array size
-
-    switch (mode) {
-        case Lookback_Modes::u32_epoch:
-            return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, false>(n);
-        case Lookback_Modes::u32_plain:
-            return get_workspace<Fast_LB_Policy, Key_T, Len_T, Value_T, false>(n);
-        case Lookback_Modes::u64_epoch: default:
-            return get_workspace<General_LB_Policy, Key_T, Len_T, Value_T, false>(n);
-    }
-}*/
-
 
 // Non-decoupled lookback path with early partial publication via chained callback
 // The lookback also includes epoch bits to avoid cudamemset on every pass.
 // Standard CUB ranking, implicit full blocking
+//
+// Programming note: __globals__'s can't go in structs. Making it so would mean
+// control would have to flow in and out of it, which kind of defeats the purpose.
 template<
     bool Descending,
     typename Lookback_Policy,
@@ -2037,6 +1992,7 @@ void onesweep_byte(
 ) {
         
     
+    // aliasing
     using Lookback_T = typename Lookback_Policy::T;
     using LB = typename Lookback_Policy::conf;
     using RTraits = radix_traits<Key_T, Is_Long_Double>;
@@ -2226,6 +2182,7 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 
 
 // Enrty point of the sorting kernel
+// TODOs: this could use some refactoring
 template <
     bool Descending,
     typename Lookback_Policy,
@@ -2313,13 +2270,12 @@ static void onesweep_byte_sort_enqueue(
         // probably not the best pratice to define the end of a loop at the beginning
         auto iteration_end = [&]() {
             ++it;
-            if constexpr(Lookback_Policy::epoch) {
+            if constexpr (Lookback_Policy::epoch) {
                 if (((it & LB::EPOCH_VALUE_MASK) == 0) && (it < RADIX_PASSES)) {
                     cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, lb_els * sizeof(Lookback_T), stream);
                 }
             }
         };
-
 
 #if EXIT_EARLY_OPT
         if (skip_mask & (1u << it)) {
@@ -2327,11 +2283,12 @@ static void onesweep_byte_sort_enqueue(
             continue;
         }
 #endif
+
         volatile Lookback_T* look_partial_pass = nullptr;
 
         // if epoch disabled memset, else pack bits 
-        if constexpr(lb_reuse) {
-            if constexpr(!lb_epoch) {
+        if constexpr (lb_reuse) {
+            if constexpr (!lb_epoch) {
                 cudaMemsetAsync(d_look_partial, 0, lb_els * sizeof(Lookback_T), stream);
             }
             look_partial_pass = d_look_partial;
@@ -2340,7 +2297,7 @@ static void onesweep_byte_sort_enqueue(
             look_partial_pass = d_look_partial ? (d_look_partial + (size_t)tileBase) : nullptr;
         }
         Lookback_T lb_bits = 0;
-        if constexpr(lb_epoch) {
+        if constexpr (lb_epoch) {
             lb_bits = Lookback<Lookback_Policy>::pack_epoch(it & LB::EPOCH_VALUE_MASK);
         }
 
@@ -2354,7 +2311,7 @@ static void onesweep_byte_sort_enqueue(
         Key_T* tmp = in;
         in = out;
         out = tmp;
-        if constexpr(RT::sorting_pairs) {
+        if constexpr (RT::sorting_pairs) {
             Value_T* tmp_vals = in_vals;
             in_vals = out_vals;
             out_vals = tmp_vals;
@@ -2366,7 +2323,7 @@ static void onesweep_byte_sort_enqueue(
     // copy if not in dest (odd number of passes)
     if (in != d_inout) {
         cudaMemcpyAsync(d_inout, in, (size_t)n * sizeof(Key_T), cudaMemcpyDeviceToDevice, stream);
-        if constexpr(RT::sorting_pairs) {
+        if constexpr (RT::sorting_pairs) {
             cudaMemcpyAsync(d_inout_vals, in_vals, (size_t)n * sizeof(Value_T), cudaMemcpyDeviceToDevice, stream);
         }
     }
@@ -2421,7 +2378,7 @@ template<
     typename Len_T,
     typename Value_T = no_value_t
 >
-static inline void looback_policy_enforcer(
+static inline void lookback_policy_enforcer(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
@@ -2487,7 +2444,7 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamCreateWithFlags(&capture_stream, cudaStreamNonBlocking);
 
         cudaStreamBeginCapture(capture_stream, cudaStreamCaptureModeGlobal);
-        looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
+        lookback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
             d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
         );
         cudaStreamEndCapture(capture_stream, &graph);
@@ -2500,7 +2457,7 @@ static inline void onesweep_byte_sort_wrap(
         return;
     }
     
-    looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
+    lookback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
         d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
     );
 }
@@ -2508,7 +2465,7 @@ static inline void onesweep_byte_sort_wrap(
 
 // ============================== Public API Interfaces ==============================
 
-// onesweep_byte_sort_wrap<false, Key_T, Len_T>(d_inout, temp_bytes, d_workspace, n);
+// onesweep_byte_sort_wrap<false, Key_T, Len_T>
 // however, size_t is faster in benchmarking
 template<typename Key_T, typename Len_T>
 static inline void onesweep_byte_sort(
@@ -2597,7 +2554,7 @@ static inline void onesweep_byte_sort_pairs_descending(
 
     It would be interesting to have an API for AoS input
     and do the conversion to SoA automatically. But will
-    have to wait for reflection to get to NVCC I guess.
+    have to wait for reflection to get to NVCC.
 */
 
 
@@ -2729,7 +2686,9 @@ static bool verify_digit_histograms(
     CHECK_CUDA(cudaFree(d_hist_ref));
 
     // Check if both histogram count buffers are equal
-    bool h_ok = check_hist_buffers<Lookback_T>(n, h_hist_ref, h_hist_chk, RADIX_PASSES, RADIX_BIN_SIZE);
+    bool h_ok = check_hist_buffers<Lookback_T>(
+        n, h_hist_ref, h_hist_chk, RADIX_PASSES, RADIX_BIN_SIZE
+    );
 
     // stop timing
     float ms_total;
@@ -3045,47 +3004,103 @@ template<
     bool Descending,
     typename Key_T,
     typename Len_T,
-    typename Value_T = no_value_t
+    typename Value_T
 >
-int benchmark(
-    Len_T n,
-    uint32_t iters,
-    uint32_t warmups,
-    uint32_t warm_ms,
-    Array_Modes arr_mode,
-    bool validation = false
-) {
+struct Benchmark_Context {
 
 
+    // aliases
     using ull_t = long long unsigned int;
-    uint32_t SORT_BLOCK_SIZE;
-    uint32_t REORDER_THREADS;
-    uint32_t REORDER_ITEMS_PER_THREAD;
     using RT_default = radix_tuning<Key_T, Value_T>;
-    if (n <= LOW_N) {
-        using RT = radix_tuning<Key_T, Value_T, true>;
-        SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
-        REORDER_THREADS = RT::REORDER_THREADS;
-        REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
-    } else {
-        using RT = radix_tuning<Key_T, Value_T, false>;
-        SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
-        REORDER_THREADS = RT::REORDER_THREADS;
-        REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
-    }
     static constexpr uint32_t RADIX_BITS = RT_default::RADIX_BITS;
     static constexpr bool SORTING_PAIRS = RT_default::sorting_pairs;
 
 
-    // initialization
-    size_t temp_bytes = 0;
-    Key_T* d_keys = nullptr;
-    [[maybe_unused]] Value_T* d_vals = nullptr;
-    uint8_t* d_workspace = nullptr;
-    
-    // launcher for API calls
-    auto launch_sorting_kernel = [&]() {
+    // benchmark tuning
+    uint32_t SORT_BLOCK_SIZE;
+    uint32_t REORDER_THREADS;
+    uint32_t REORDER_ITEMS_PER_THREAD;
 
+    // CUDA long double support
+    using Key_T_Sort = native_128bit_support::try_valid_long_double_t<Key_T>;
+    static constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T>();
+
+    // var declaration - config
+    Len_T n;
+    uint32_t iters;
+    uint32_t warmups;
+    uint32_t warm_ms;
+    bool validation;
+    Array_Modes arr_mode;
+    uint32_t warmups_done = 0;
+
+    // sort buffers
+    Key_T* d_keys = nullptr;
+    Value_T* d_vals = nullptr;
+    uint8_t* d_workspace = nullptr;
+    Key_T_Sort* d_keys_sort = nullptr; // used to get long double identity
+    
+    // helpers
+    size_t temp_bytes = 0;
+    size_t vals_bytes = 0;
+    std::string key_name;
+    std::string_view val_name;
+
+    // CUDA specific vars
+    cudaEvent_t start{};
+    cudaEvent_t stop{};
+    int device = 0;
+    cudaDeviceProp prop;
+
+
+    struct Timings {
+        double  ms_avg = 0.0;
+        double  ms_acc = 0.0;
+        long long els = 0;
+        double psel = 0.0;
+        double us_std = 0.0;
+
+        // don't feel like including another header for this
+        double *d = nullptr;
+
+        void init(uint32_t iters) {
+            d = (double *)malloc(sizeof(double) * iters);
+        }
+
+        void calculate(uint32_t iters, Len_T n) {
+            ms_avg = ms_acc / (double)iters;
+            els = (long long)((1000.0 / ms_avg) * (double)n);
+            psel = 1'000'000'000'000.0 / (double)els;
+            us_std = stdev(d, ms_avg, (size_t)iters) * 1000.0;
+        }
+
+        void cleanup() {
+            free(d);
+        }
+
+        ~Timings() {
+            cleanup();
+        }
+
+    } timings;
+
+
+    void init_bench_tuning() {
+        if (n <= LOW_N) {
+            using RT = radix_tuning<Key_T, Value_T, true>;
+            SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+            REORDER_THREADS = RT::REORDER_THREADS;
+            REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+        } else {
+            using RT = radix_tuning<Key_T, Value_T, false>;
+            SORT_BLOCK_SIZE = RT::SORT_BLOCK_SIZE;
+            REORDER_THREADS = RT::REORDER_THREADS;
+            REORDER_ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
+        }    
+    }
+
+
+    void launch_sorting_kernel() {
         if constexpr (SORTING_PAIRS) {
             if constexpr (Descending) {
                 onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(
@@ -3107,46 +3122,60 @@ int benchmark(
                 );
             }
         }
-
-    };
-    
-    // do not time memory allocations
-    [[maybe_unused]] size_t vals_bytes = 0;
-    CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
-    if constexpr (SORTING_PAIRS) {
-        // align values up n bytes 
-        vals_bytes = align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n);
-        CHECK_CUDA(cudaMalloc(&d_vals, vals_bytes));
     }
-    launch_sorting_kernel();
 
-    // optional debug
-    if constexpr (BENCH_DEBUG) {
-        printf(
-            "n: %llu, key size: %llu, val size: %llu, temp_bytes requested: %llu\n",
-            (ull_t)n,
-            (ull_t)sizeof(Key_T) * n,
-            (ull_t)(SORTING_PAIRS ? vals_bytes : 0),
-            (ull_t)temp_bytes
-        );
+
+    bool allocate_buffers() {
+        // alloc keys and vals
+        vals_bytes = 0;
+        CHECK_CUDA(cudaMalloc(&d_keys, sizeof(Key_T) * n));    
+        if constexpr (SORTING_PAIRS) {
+            // align values up n bytes 
+            vals_bytes = align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n);
+            CHECK_CUDA(cudaMalloc(&d_vals, vals_bytes));
+        }
+        launch_sorting_kernel();
+
+        // optional debug
+        if constexpr (BENCH_DEBUG) {
+            printf(
+                "n: %llu, key size: %llu, val size: %llu, temp_bytes requested: %llu\n",
+                (ull_t)n,
+                (ull_t)sizeof(Key_T) * n,
+                (ull_t)(SORTING_PAIRS ? vals_bytes : 0),
+                (ull_t)temp_bytes
+            );
+        }
+
+        // alloc workspace
+        CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
+        CHECK_CUDA(cudaGetLastError());
+
+        // transform keys into unsigned identity to support long doubles
+        d_keys_sort = reinterpret_cast<Key_T_Sort*>(d_keys);
+
+        return true;
     }
-    
-    CHECK_CUDA(cudaMalloc(&d_workspace, temp_bytes));
-    CHECK_CUDA(cudaGetLastError());
 
-    // timers
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
 
-    // CUDA long double support
-    using Key_T_Sort = native_128bit_support::try_valid_long_double_t<Key_T>;
-    static constexpr bool is_ld = native_128bit_support::is_valid_long_double<Key_T>();
-    Key_T_Sort* d_keys_sort = reinterpret_cast<Key_T_Sort*>(d_keys);
+    void create_timer() {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+    }
+
+
+    void timed_sort() {
+        cudaEventRecord(start);
+        launch_sorting_kernel();
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+    }
+
 
     // define sorting iteration
-    auto run_timed_iteration = [&](uint32_t seed) {
+    float run_timed_iteration(uint32_t seed) {
         
+        // init keys and values
         init_keys<Key_T_Sort, Len_T, is_ld><<<div_round_up<Len_T>(n, 256), 256>>>(
             d_keys_sort, n, seed, arr_mode
         );
@@ -3172,140 +3201,210 @@ int benchmark(
         }
         CHECK_CUDA(cudaGetLastError());
 
-        cudaEventRecord(start);
-        launch_sorting_kernel();
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
+        // run actual sort
+        timed_sort();
 
+        // return time elpased
         float ms_total = 0.0f;
         CHECK_CUDA(cudaEventElapsedTime(&ms_total, start, stop));
         return ms_total;
     };
 
+    
     // warmup
-    double warm_ms_passed = 0.0;
-    uint32_t warmups_done = 0;
-    uint32_t seed_counter = 0;
-    while ((warmups_done < warmups) || (!validation && (warm_ms_passed < (double)warm_ms))) {
-        warm_ms_passed += run_timed_iteration(set_seed_radix(seed_counter++));
-        ++warmups_done;
+    uint32_t warmup(uint32_t init_seed = 0) {
+        double warm_ms_passed = 0.0;
+        warmups_done = 0;
+        uint32_t seed_counter = init_seed;
+        while (
+            (warmups_done < warmups + init_seed) || 
+            (!validation && (warm_ms_passed < (double)warm_ms))
+        ) {
+            warm_ms_passed += run_timed_iteration(set_seed_radix(seed_counter++));
+            ++warmups_done;
+        }
+        return seed_counter;
     }
+
 
     // benchmark runs
-    double ms_acc = 0.0;
-    double* timings = (double *)malloc(sizeof(*timings) * iters);
-    for (uint32_t i = 0; i < iters; ++i) {
-        double temp = run_timed_iteration(set_seed_radix(seed_counter++));
-        ms_acc += temp;
-        timings[i] = temp;
+    double bench(uint32_t seed_counter) {
+        timings.init(iters);
+        timings.ms_acc = 0.0;
+        for (uint32_t i = 0; i < iters; ++i) {
+            double temp = run_timed_iteration(set_seed_radix(seed_counter++));
+            timings.ms_acc += temp;
+            timings.d[i] = temp;
+        }
+        return seed_counter;
     }
-    
-    // calculate stats
-    double ms_avg = ms_acc / (double)iters;
-    long long els = (long long)((1000.0 / ms_avg) * (double)n);
-    double psel = 1'000'000'000'000.0 / (double)els;
-    double us_std = stdev(timings, ms_avg, (size_t)iters) * 1000.0;
-    free(timings);
 
+    
     // Device properties
-    int device = 0;
-    cudaDeviceProp prop;
-    cudaGetDevice(&device);
-    cudaGetDeviceProperties(&prop, device);
+    void init_dev_properties() {
+        cudaGetDevice(&device);
+        cudaGetDeviceProperties(&prop, device);
+    }
+
+
+    void init_strings() {
+        key_name = std::string(type_name<Key_T>());
+        if constexpr (std::is_same_v<Key_T, long double>) {
+            key_name += " (" + std::to_string(sizeof(Key_T) * 8) + " bits)";
+        }
+        val_name = type_name<Value_T>();
+    }
+
 
     // print main stats
-    std::string sv_temp = std::string(type_name<Key_T>());
-    if constexpr (std::is_same_v<Key_T, long double>) {
-        sv_temp += " (" + std::to_string(sizeof(Key_T) * 8) + " bits)";
-    }
-    std::string_view svt_temp = type_name<Value_T>();
-    if (!validation) {
-        printf(
-            "\nGPU: %s\n"
-            "\nRADIX\t=\t%d\n"
-            "N\t=\t%llu\n"
-            "Type\t=\t%.*s\n"
-            "Blocks\t=\t%d\n"
-            "Threads\t=\t%d\n"
-            "it/thd\t=\t%d\n"
-            "Memory\t=\t%.3f MB\n"
-            "Time\t=\t%.3f ms (+- %.3f us)\n"
-            "\t\t(%d avg w/ %d wm)\n"
-            "it/s\t=\t%lld\n"
-            "ps/el\t=\t%.3f\n"
-            "Mode\t=\t%s\n"
-            "Order\t=\t%s\n"
-            "Pairs\t=\t%.*s\n",
+    void print_stats() {
+        
+        if (!validation) {
+            printf(
+                "\nGPU: %s\n"
+                "\nRADIX\t=\t%d\n"
+                "N\t=\t%llu\n"
+                "Type\t=\t%.*s\n"
+                "Blocks\t=\t%d\n"
+                "Threads\t=\t%d\n"
+                "it/thd\t=\t%d\n"
+                "Memory\t=\t%.3f MB\n"
+                "Time\t=\t%.3f ms (+- %.3f us)\n"
+                "\t\t(%d avg w/ %d wm)\n"
+                "it/s\t=\t%lld\n"
+                "ps/el\t=\t%.3f\n"
+                "Mode\t=\t%s\n"
+                "Order\t=\t%s\n"
+                "Pairs\t=\t%.*s\n",
 
-            prop.name,
-            RADIX_BITS,
-            (ull_t)n,
-            (int)sv_temp.size(), sv_temp.data(),
-            (uint32_t)div_round_up<Len_T>(n, SORT_BLOCK_SIZE),
-            REORDER_THREADS,
-            REORDER_ITEMS_PER_THREAD,
-            (double)temp_bytes / (1024. * 1024.),
-            ms_avg, us_std,
-            iters, warmups_done,
-            els,
-            psel,
-            arr_modes_to_string(arr_mode),
-            Descending ? "DESC" : "ASC",
-            SORTING_PAIRS ? (int)svt_temp.size() : 2,
-            SORTING_PAIRS ? svt_temp.data() : "No"
-        );
+                prop.name,
+                RADIX_BITS,
+                (ull_t)n,
+                (int)key_name.size(), key_name.data(),
+                (uint32_t)div_round_up<Len_T>(n, SORT_BLOCK_SIZE),
+                REORDER_THREADS,
+                REORDER_ITEMS_PER_THREAD,
+                (double)temp_bytes / (1024. * 1024.),
+                timings.ms_avg, timings.us_std,
+                iters, warmups_done,
+                timings.els,
+                timings.psel,
+                arr_modes_to_string(arr_mode),
+                Descending ? "DESC" : "ASC",
+                SORTING_PAIRS ? (int)val_name.size() : 2,
+                SORTING_PAIRS ? val_name.data() : "No"
+            );
+            print_lookback_policy(get_lookback_mode(n));
+        }
     }
     
-    Lookback_Modes mode = get_lookback_mode(n);
 
-    if (!validation) {
-        print_lookback_policy(mode);
+    void print_validation_stats(bool test_valid) {
+        if(validation) {
+            // verification stats
+            std::string pair_str = "Pair: " + std::string(val_name) + ",";
+            printf(
+                "Sorting %llu els "
+                "of type %.*s, %.*s (%.3f MB)"
+                "(%s), %s array - %.3f ms"
+                "(%d avg + %d wm)... %s\n",
+
+                (ull_t)n,
+                (int)key_name.size(), key_name.data(),
+                SORTING_PAIRS ? (int)pair_str.size() : 0,
+                SORTING_PAIRS ? pair_str.data() : "",
+                (double)temp_bytes / (1024. * 1024.),
+                Descending ? "DESC" : "ASC",
+                arr_modes_to_string(arr_mode),
+                timings.ms_avg, iters, warmups_done,
+                test_valid ? "passed" : "failed"
+            );
+        }
     }
+
 
     // post sort verification
-    uint32_t last_seed = (uint32_t)(set_seed_radix(seed_counter - 1));
-    bool bench_valid = verify_sorted<Descending, Key_T_Sort, Len_T, Value_T, is_ld>(
-        d_keys_sort, d_vals, d_workspace, n, last_seed, arr_mode, validation
-    );
-
-    // verification stats
-    if (validation) {
-        std::string pair_str = "Pair: " + std::string(svt_temp) + ",";
-        printf(
-            "Sorting %llu els "
-            "of type %.*s, %.*s (%.3f MB)"
-            "(%s), %s array - %.3f ms"
-            "(%d avg + %d wm)... %s\n",
-
-            (ull_t)n,
-            (int)sv_temp.size(), sv_temp.data(),
-            SORTING_PAIRS ? (int)pair_str.size() : 0,
-            SORTING_PAIRS ? pair_str.data() : "",
-            (double)temp_bytes / (1024. * 1024.),
-            Descending ? "DESC" : "ASC",
-            arr_modes_to_string(arr_mode),
-            ms_avg, iters, warmups_done,
-            bench_valid ? "passed" : "failed"
+    bool bench_valid(uint32_t seed_counter) {
+        uint32_t last_seed = (uint32_t)(set_seed_radix(seed_counter - 1));
+        bool valid = verify_sorted<Descending, Key_T_Sort, Len_T, Value_T, is_ld>(
+            d_keys_sort, d_vals, d_workspace, n, last_seed, arr_mode, validation
         );
+        return valid;
     }
 
-    // cleanup
-    CHECK_CUDA(cudaEventDestroy(start));
-    CHECK_CUDA(cudaEventDestroy(stop));
-    CHECK_CUDA(cudaFree(d_workspace));
-    CHECK_CUDA(cudaFree(d_keys));
-    if constexpr (SORTING_PAIRS) {
-        CHECK_CUDA(cudaFree(d_vals));
+
+    void cleanup () {
+        // cleanup
+        if (start)  {
+            CHECK_CUDA(cudaEventDestroy(start));
+        }
+        if (stop)  {
+            CHECK_CUDA(cudaEventDestroy(stop));
+        }
+        if (d_workspace) {
+            CHECK_CUDA(cudaFree(d_workspace));
+        }
+        if (d_keys) {
+            CHECK_CUDA(cudaFree(d_keys));
+        }
+        if constexpr (SORTING_PAIRS) {
+            if (d_vals) {
+                CHECK_CUDA(cudaFree(d_vals));
+            }
+        }
     }
 
-    return bench_valid;
-}
+
+    ~Benchmark_Context() {
+        cleanup();
+    }
+};
+
+
+template<
+    bool Descending,
+    typename Key_T,
+    typename Len_T,
+    typename Value_T = no_value_t
+>
+int benchmark(
+    Len_T n,
+    uint32_t iters,
+    uint32_t warmups,
+    uint32_t warm_ms,
+    Array_Modes arr_mode,
+    bool validation = false
+) {
+
+    Benchmark_Context<Descending, Key_T, Len_T, Value_T> ctx{
+        .n = n,
+        .iters = iters,
+        .warmups = warmups,
+        .warm_ms = warm_ms,
+        .validation = validation,
+        .arr_mode = arr_mode,
+    };
+    
+    ctx.init_bench_tuning();
+    ctx.init_dev_properties();
+    ctx.create_timer();
+    ctx.init_strings();
+    
+    ctx.allocate_buffers();
+    
+    uint32_t seed = ctx.warmup();
+    seed = ctx.bench(seed);
+
+    ctx.timings.calculate(iters, n);
+    ctx.print_stats();
+    bool passed = ctx.bench_valid(seed);
+    ctx.print_validation_stats(passed);
+
+    return passed;
+};
 
 
 // ========================= Validation Kernels ===========================
-
-// in ms 
-#define COOL_BETWEEN_RUNS   0.0
 
 template<typename... Ts> struct type_list {};
 

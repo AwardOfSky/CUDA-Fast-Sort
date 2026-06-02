@@ -1,4 +1,4 @@
-// nvcc -O3 -arch=sm_86 -std=c++17 cubradix.cu bench_parser.cpp -o cub_radix.exe
+// nvcc -O3 -std=c++17 -arch=sm_86 cubradix.cu bench_parser.cpp -o cub_radix(.exe)
 // - lineinfo optional
 
 #include <cuda_runtime.h>

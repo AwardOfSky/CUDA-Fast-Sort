@@ -29,7 +29,7 @@
 #include "bench_parser.h"
 
 // vvv HEAVY! Only enable if you want to run validation.
-#define VALIDATION_TEST     0
+#define VALIDATION_TEST     1
 #include "validate_sort.cuh"
 
 

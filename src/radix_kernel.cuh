@@ -1,12 +1,14 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe
-// Reorder kernel header
+/*
+    nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu(.exe)    
+    Reorder kernel header
 
-// Compare SASS agaisnt "sass.txt" baseline:
-// (use fc instead of diff if on Windows)
-//
-// nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe &&
-// cuobjdump --dump-sass radix_gpu.exe > sass1.txt &&
-// diff sass.txt sass1.txt
+    Compare SASS agaisnt "sass.txt" baseline:
+    (use fc instead of diff if on Windows)
+
+    nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu(.exe) &&
+    cuobjdump --dump-sass radix_gpu.exe > sass1.txt &&
+    diff sass.txt sass1.txt
+*/
 
 
 #pragma once
@@ -105,49 +107,13 @@ struct Sort_Workspace {
     }
 };
 
-/*
-template <
-    typename Lookback_Policy,
-    typename Key_T,
-    typename Len_T,
-    typename Value_T,
-    bool Short_Mode = false
->
-static auto get_workspace(Len_T n) {
-    using Lookback_T = typename Lookback_Policy::T;
-    using Workspace = Sort_Workspace<Key_T, Lookback_T, Len_T, Value_T, Short_Mode>;
-    Workspace ws = Workspace::template build<Lookback_Policy>(n);
-    return ws;
-}
-
-
-template <
-    typename Key_T,
-    typename Len_T,
-    typename Value_T
->
-static auto generate_workspace(Len_T n) {
-
-    if (n <= LOW_N) {
-        return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, true>(n);
-    }
-
-    Lookback_Modes mode = get_lookback_mode(n); // according to array size
-
-    switch (mode) {
-        case Lookback_Modes::u32_epoch:
-            return get_workspace<Faster_LB_Policy, Key_T, Len_T, Value_T, false>(n);
-        case Lookback_Modes::u32_plain:
-            return get_workspace<Fast_LB_Policy, Key_T, Len_T, Value_T, false>(n);
-        case Lookback_Modes::u64_epoch: default:
-            return get_workspace<General_LB_Policy, Key_T, Len_T, Value_T, false>(n);
-    }
-}*/
-
 
 // Non-decoupled lookback path with early partial publication via chained callback
 // The lookback also includes epoch bits to avoid cudamemset on every pass.
 // Standard CUB ranking, implicit full blocking
+//
+// Programming note: __globals__'s can't go in structs. Making it so would mean
+// control would have to flow in and out of it, which kind of defeats the purpose.
 template<
     bool Descending,
     typename Lookback_Policy,
@@ -171,6 +137,7 @@ void onesweep_byte(
 ) {
         
     
+    // aliasing
     using Lookback_T = typename Lookback_Policy::T;
     using LB = typename Lookback_Policy::conf;
     using RTraits = radix_traits<Key_T, Is_Long_Double>;
@@ -360,6 +327,7 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 
 
 // Enrty point of the sorting kernel
+// TODOs: this could use some refactoring
 template <
     bool Descending,
     typename Lookback_Policy,
@@ -447,13 +415,12 @@ static void onesweep_byte_sort_enqueue(
         // probably not the best pratice to define the end of a loop at the beginning
         auto iteration_end = [&]() {
             ++it;
-            if constexpr(Lookback_Policy::epoch) {
+            if constexpr (Lookback_Policy::epoch) {
                 if (((it & LB::EPOCH_VALUE_MASK) == 0) && (it < RADIX_PASSES)) {
                     cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, lb_els * sizeof(Lookback_T), stream);
                 }
             }
         };
-
 
 #if EXIT_EARLY_OPT
         if (skip_mask & (1u << it)) {
@@ -461,11 +428,12 @@ static void onesweep_byte_sort_enqueue(
             continue;
         }
 #endif
+
         volatile Lookback_T* look_partial_pass = nullptr;
 
         // if epoch disabled memset, else pack bits 
-        if constexpr(lb_reuse) {
-            if constexpr(!lb_epoch) {
+        if constexpr (lb_reuse) {
+            if constexpr (!lb_epoch) {
                 cudaMemsetAsync(d_look_partial, 0, lb_els * sizeof(Lookback_T), stream);
             }
             look_partial_pass = d_look_partial;
@@ -474,7 +442,7 @@ static void onesweep_byte_sort_enqueue(
             look_partial_pass = d_look_partial ? (d_look_partial + (size_t)tileBase) : nullptr;
         }
         Lookback_T lb_bits = 0;
-        if constexpr(lb_epoch) {
+        if constexpr (lb_epoch) {
             lb_bits = Lookback<Lookback_Policy>::pack_epoch(it & LB::EPOCH_VALUE_MASK);
         }
 
@@ -488,7 +456,7 @@ static void onesweep_byte_sort_enqueue(
         Key_T* tmp = in;
         in = out;
         out = tmp;
-        if constexpr(RT::sorting_pairs) {
+        if constexpr (RT::sorting_pairs) {
             Value_T* tmp_vals = in_vals;
             in_vals = out_vals;
             out_vals = tmp_vals;
@@ -500,7 +468,7 @@ static void onesweep_byte_sort_enqueue(
     // copy if not in dest (odd number of passes)
     if (in != d_inout) {
         cudaMemcpyAsync(d_inout, in, (size_t)n * sizeof(Key_T), cudaMemcpyDeviceToDevice, stream);
-        if constexpr(RT::sorting_pairs) {
+        if constexpr (RT::sorting_pairs) {
             cudaMemcpyAsync(d_inout_vals, in_vals, (size_t)n * sizeof(Value_T), cudaMemcpyDeviceToDevice, stream);
         }
     }
@@ -555,7 +523,7 @@ template<
     typename Len_T,
     typename Value_T = no_value_t
 >
-static inline void looback_policy_enforcer(
+static inline void lookback_policy_enforcer(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
@@ -621,7 +589,7 @@ static inline void onesweep_byte_sort_wrap(
         cudaStreamCreateWithFlags(&capture_stream, cudaStreamNonBlocking);
 
         cudaStreamBeginCapture(capture_stream, cudaStreamCaptureModeGlobal);
-        looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
+        lookback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
             d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
         );
         cudaStreamEndCapture(capture_stream, &graph);
@@ -634,7 +602,7 @@ static inline void onesweep_byte_sort_wrap(
         return;
     }
     
-    looback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
+    lookback_policy_enforcer<Descending, Key_T, Len_T, Value_T>(
         d_inout, temp_bytes, d_workspace, n, d_inout_vals, capture_stream
     );
 }
@@ -642,7 +610,7 @@ static inline void onesweep_byte_sort_wrap(
 
 // ============================== Public API Interfaces ==============================
 
-// onesweep_byte_sort_wrap<false, Key_T, Len_T>(d_inout, temp_bytes, d_workspace, n);
+// onesweep_byte_sort_wrap<false, Key_T, Len_T>
 // however, size_t is faster in benchmarking
 template<typename Key_T, typename Len_T>
 static inline void onesweep_byte_sort(
@@ -731,7 +699,7 @@ static inline void onesweep_byte_sort_pairs_descending(
 
     It would be interesting to have an API for AoS input
     and do the conversion to SoA automatically. But will
-    have to wait for reflection to get to NVCC I guess.
+    have to wait for reflection to get to NVCC.
 */
 
 

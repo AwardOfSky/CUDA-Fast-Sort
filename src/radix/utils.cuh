@@ -7,15 +7,16 @@
 #include <cstdint>
 
 #if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
 #else
     #include <time.h>
 #endif
 
 #if defined(_MSC_VER)
-  #define RSORT_FORCEINLINE __forceinline
+    #define RSORT_FORCEINLINE __forceinline
 #else
-  #define RSORT_FORCEINLINE __inline__ __attribute__((__always_inline__))
+    #define RSORT_FORCEINLINE __inline__ __attribute__((__always_inline__))
 #endif
 
 #define WARP_SIZE       32
@@ -351,16 +352,6 @@ __global__ void check_sorted(const T* a, size_t n, int* ok) {
             }
         }
     }
-}
-
-
-template <typename T, bool Is_Long_Double = false>
-__device__ T correct_ld(T val) {
-    using RTraits = radix_traits<T, Is_Long_Double>;
-    if constexpr (Is_Long_Double) {
-        return (T)RTraits::twiddle_in<false>(val);
-    }
-    return val;
 }
 
 

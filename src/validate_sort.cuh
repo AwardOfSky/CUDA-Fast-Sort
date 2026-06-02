@@ -14,7 +14,8 @@
 #define PAIR_VALIDATION         1
 #define LONG_DOUBLE_VALIDATION  1
 #define U128_BIT_VALIDATION     1
-
+// in ms 
+#define COOL_BETWEEN_RUNS       0.0
 
 #if defined(__SIZEOF_INT128__) && U128_BIT_VALIDATION 
     #define NATIVE_U128_TOKEN   native_128bit_support::native_u128,
@@ -46,10 +47,8 @@
 #define VALIDATION_TEST     1
 #endif 
 
-namespace rsort {
 
-// in ms 
-#define COOL_BETWEEN_RUNS   0.0
+namespace rsort {
 
 template<typename... Ts> struct type_list {};
 

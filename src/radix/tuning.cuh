@@ -11,7 +11,6 @@
 #define STAGE_KEYS_OVERRIDE     staging_modes::automatic
 #define STAGE_VALS_OVERRIDE     staging_modes::automatic
 
-
 #ifndef WARP_SIZE
 #define WARP_SIZE 32
 #endif
@@ -229,6 +228,7 @@ struct radix_tuning : radix_consts {
 
 struct native_128bit_support {
 
+
     // 128 bit support (for integer types in GCC and Clang)
 #if defined(__SIZEOF_INT128__)
     using native_u128 = unsigned __int128;
@@ -252,6 +252,7 @@ struct native_128bit_support {
             (sizeof(long double) == 8),
             "Sorting long doubles expects 64 or 128 bits."
         );
+
         // if long double is 64-bit, there is no need for any of this...
         // (sizeof(long double) == 16) acts as: 
         // are we calling this from CUDA or host code?
@@ -271,12 +272,14 @@ struct native_128bit_support {
     static constexpr bool is_native_128_integral_v = false;
 #endif
 
+
     template <typename T>
     static constexpr bool is_valid_128bit_t = 
         has_native_u128 && (
             is_native_128_integral_v<T> ||
             is_valid_long_double<T>()
         );
+
 
     template <typename T>
     using try_valid_long_double_t = std::conditional_t<
@@ -287,7 +290,7 @@ struct native_128bit_support {
 };
 
 
-// is_ld (is long double) is needed cause CUDA does not support long doubles
+// is_ld (is long double) is needed cause CUDA demotes ld to double
 template<typename T, bool Is_Long_Double = false>
 struct radix_traits : native_128bit_support {
 
@@ -385,9 +388,7 @@ struct radix_traits : native_128bit_support {
 
 
     // Key extractor
-    //template<bool Descending>
     static __device__ RSORT_FORCEINLINE uint32_t extract_key(unsigned_of x, unsigned_of bit) {
-        //if constexpr (Descending) x = ~x;
         return (x >> bit) & radix_consts::RADIX_MASK;
     }
 };
