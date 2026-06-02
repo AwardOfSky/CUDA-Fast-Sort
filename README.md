@@ -126,13 +126,13 @@ Some noteworthy micro-optimizations:
 The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and acsending/descending sorting:
 
 
-- **onesweep_byte_sort** - Sort an array of keys only in ascending order.
+- **sort** - Sort an array of keys only in ascending order.
 
-- **onesweep_byte_sort_descending** - Sort an array of keys only in descending order.
+- **sort_descending** - Sort an array of keys only in descending order.
 
-- **onesweep_byte_sort_pairs** - Sort an arrays of keys, along with a second array of corresponding values, in ascending order.
+- **sort_pairs** - Sort an arrays of keys, along with a second array of corresponding values, in ascending order.
 
-- **onesweep_byte_sort_pairs_descending** - Sort an arrays of keys, along with a second array of corresponding values, in descending order.
+- **sort_pairs_descending** - Sort an arrays of keys, along with a second array of corresponding values, in descending order.
 
 
 #### Arguments (in order):

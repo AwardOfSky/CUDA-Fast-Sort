@@ -557,21 +557,21 @@ struct Benchmark_Context {
     void launch_sorting_kernel() {
         if constexpr (SORTING_PAIRS) {
             if constexpr (Descending) {
-                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(
+                sort_pairs_descending<Key_T, Len_T, Value_T>(
                     d_keys, d_vals, &temp_bytes, d_workspace, n
                 );
             } else {
-                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(
+                sort_pairs<Key_T, Len_T, Value_T>(
                     d_keys, d_vals, &temp_bytes, d_workspace, n
                 );
             }
         } else {
             if constexpr (Descending) {
-                onesweep_byte_sort_descending<Key_T, Len_T>(
+                sort_descending<Key_T, Len_T>(
                     d_keys, &temp_bytes, d_workspace, n
                 );
             } else {
-                onesweep_byte_sort<Key_T, Len_T>(
+                sort<Key_T, Len_T>(
                     d_keys, &temp_bytes, d_workspace, n
                 );
             }
@@ -816,7 +816,7 @@ struct Benchmark_Context {
 
 
 template<
-    bool Descending,
+    Order Descending,
     typename Key_T,
     typename Len_T,
     typename Value_T = no_value_t
@@ -831,7 +831,7 @@ int benchmark(
 ) {
 
     // Boring C++17 init
-    Benchmark_Context<Descending, Key_T, Len_T, Value_T> ctx{};
+    Benchmark_Context<(bool)Descending, Key_T, Len_T, Value_T> ctx{};
     ctx.n = n;
     ctx.iters = iters;
     ctx.warmups = warmups;

@@ -672,6 +672,13 @@ uint32_t __host__ max_array_bits(const uint32_t vram_gb, const uint32_t sizeof_k
 
 
 // ---- generic sort helpers ----
+
+enum class Order : bool {
+    ascending = false,
+    descending = true
+};
+
+
 enum class Array_Modes : uint32_t {
     start,
     random,
@@ -2468,7 +2475,7 @@ static inline void onesweep_byte_sort_wrap(
 // onesweep_byte_sort_wrap<false, Key_T, Len_T>
 // however, size_t is faster in benchmarking
 template<typename Key_T, typename Len_T>
-static inline void onesweep_byte_sort(
+static inline void sort(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
@@ -2488,7 +2495,7 @@ static inline void onesweep_byte_sort(
 
 
 template<typename Key_T, typename Len_T>
-static inline void onesweep_byte_sort_descending(
+static inline void sort_descending(
     Key_T* d_inout,
     size_t* temp_bytes,
     uint8_t* d_workspace,
@@ -2508,7 +2515,7 @@ static inline void onesweep_byte_sort_descending(
 
 
 template<typename Key_T, typename Len_T, typename Value_T>
-static inline void onesweep_byte_sort_pairs(
+static inline void sort_pairs(
     Key_T* d_inout,
     Value_T* d_inout_values,
     size_t* temp_bytes,
@@ -2529,7 +2536,7 @@ static inline void onesweep_byte_sort_pairs(
 
 
 template<typename Key_T, typename Len_T, typename Value_T>
-static inline void onesweep_byte_sort_pairs_descending(
+static inline void sort_pairs_descending(
     Key_T* d_inout,
     Value_T* d_inout_values,
     size_t* temp_bytes,
@@ -3103,21 +3110,21 @@ struct Benchmark_Context {
     void launch_sorting_kernel() {
         if constexpr (SORTING_PAIRS) {
             if constexpr (Descending) {
-                onesweep_byte_sort_pairs_descending<Key_T, Len_T, Value_T>(
+                sort_pairs_descending<Key_T, Len_T, Value_T>(
                     d_keys, d_vals, &temp_bytes, d_workspace, n
                 );
             } else {
-                onesweep_byte_sort_pairs<Key_T, Len_T, Value_T>(
+                sort_pairs<Key_T, Len_T, Value_T>(
                     d_keys, d_vals, &temp_bytes, d_workspace, n
                 );
             }
         } else {
             if constexpr (Descending) {
-                onesweep_byte_sort_descending<Key_T, Len_T>(
+                sort_descending<Key_T, Len_T>(
                     d_keys, &temp_bytes, d_workspace, n
                 );
             } else {
-                onesweep_byte_sort<Key_T, Len_T>(
+                sort<Key_T, Len_T>(
                     d_keys, &temp_bytes, d_workspace, n
                 );
             }
@@ -3362,7 +3369,7 @@ struct Benchmark_Context {
 
 
 template<
-    bool Descending,
+    Order Descending,
     typename Key_T,
     typename Len_T,
     typename Value_T = no_value_t
@@ -3377,7 +3384,7 @@ int benchmark(
 ) {
 
     // Boring C++17 init
-    Benchmark_Context<Descending, Key_T, Len_T, Value_T> ctx{};
+    Benchmark_Context<(bool)Descending, Key_T, Len_T, Value_T> ctx{};
     ctx.n = n;
     ctx.iters = iters;
     ctx.warmups = warmups;
@@ -3470,9 +3477,9 @@ Validation_Result validate_radix_type(
         int pass_ok;
 
         if (descending) {
-            pass_ok = benchmark<true, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<Order::descending, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         } else {
-            pass_ok = benchmark<false, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<Order::ascending, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         }
 
         result.add(pass_ok);

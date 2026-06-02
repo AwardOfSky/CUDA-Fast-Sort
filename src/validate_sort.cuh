@@ -114,9 +114,9 @@ Validation_Result validate_radix_type(
         int pass_ok;
 
         if (descending) {
-            pass_ok = benchmark<true, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<Order::descending, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         } else {
-            pass_ok = benchmark<false, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
+            pass_ok = benchmark<Order::ascending, Key_T, uint64_t, Value_T>(n, iter, warm, 0, mode, true);
         }
 
         result.add(pass_ok);

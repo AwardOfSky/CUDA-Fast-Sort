@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
 
     // Benchmark example
     if (!conf.validation) {
-        bool ret = rsort::benchmark<false, uint32_t, size_t>(
+        bool ret = rsort::benchmark<rsort::Order::descending, uint32_t, size_t>(
             conf.n,
             conf.iterations,
             conf.warmups,

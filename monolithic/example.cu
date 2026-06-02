@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     // Benchmark example
     if (!API_EXAMPLE) {
         if (!conf.validation) {
-            bool ret = rsort::benchmark<false, uint32_t>(
+            bool ret = rsort::benchmark<rsort::Order::ascending, uint32_t>(
                 conf.n,
                 conf.iterations,
                 conf.warmups,
@@ -81,15 +81,15 @@ int main(int argc, char** argv) {
         auto launch_sorting_kernel = [&]() {
             if constexpr (API_KV_SORT) {
                 if constexpr (API_KV_DESC) {
-                    rsort::onesweep_byte_sort_pairs_descending<Key_T, Len_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+                    rsort::sort_pairs_descending<Key_T, Len_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
                 } else {
-                    rsort::onesweep_byte_sort_pairs<Key_T, Len_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
+                    rsort::sort_pairs<Key_T, Len_T>(d_keys, d_vals, &temp_bytes, d_workspace, n);
                 }
             } else {
                 if constexpr (API_KV_DESC) {
-                    rsort::onesweep_byte_sort_descending<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+                    rsort::sort_descending<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
                 } else {
-                    rsort::onesweep_byte_sort<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
+                    rsort::sort<Key_T, Len_T>(d_keys, &temp_bytes, d_workspace, n);
                 }
             }
         };

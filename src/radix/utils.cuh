@@ -195,6 +195,13 @@ uint32_t __host__ max_array_bits(const uint32_t vram_gb, const uint32_t sizeof_k
 
 
 // ---- generic sort helpers ----
+
+enum class Order : bool {
+    ascending = false,
+    descending = true
+};
+
+
 enum class Array_Modes : uint32_t {
     start,
     random,
