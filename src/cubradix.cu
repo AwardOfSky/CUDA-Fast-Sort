@@ -15,7 +15,12 @@
 #include "bench_parser.h"
 
 
-template<bool Descending, typename T, typename Len_T, typename Value_T = rsort::no_value_t>
+template<
+    bool Descending,
+    typename T,
+    typename Len_T,
+    typename Value_T = rsort::no_value_t
+>
 int benchmark_cub(
 Len_T n,
 uint32_t iters,
@@ -36,7 +41,7 @@ int main(int argc, char** argv) {
     }
 
     // Benchmark example
-    bool ret = benchmark_cub<false, uint32_t, size_t>(
+    bool ret = benchmark_cub<(bool)rsort::Order::ascending, uint32_t, size_t>(
         conf.n,
         conf.iterations,
         conf.warmups,

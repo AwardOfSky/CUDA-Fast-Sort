@@ -6,6 +6,10 @@ bin/
 *.exe
 *.out
 *.cubin
+# specifics
+src/cub_radix
+src/radix_gpu
+monolithic/rsort
 
 # CUDA / NVCC temp
 *.fatbin
