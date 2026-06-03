@@ -2596,7 +2596,6 @@ static bool check_hist_buffers(
                     (unsigned long long)chk_count
                 );
                 return false;
-                break; // double
             }
         }
     }
@@ -3082,7 +3081,9 @@ struct Benchmark_Context {
         }
 
         void cleanup() {
-            free(d);
+            if (d) {
+                free(d);
+            }
         }
 
         ~Timings() {
