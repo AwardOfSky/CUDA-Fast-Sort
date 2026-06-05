@@ -205,7 +205,7 @@ enum class Order : bool {
 enum class Array_Modes : uint32_t {
     start,
     random,
-    blank_bytes,
+    byte_skip,
     asc,
     end,
 };
@@ -213,7 +213,7 @@ enum class Array_Modes : uint32_t {
 
 constexpr const char* arr_modes_to_string(Array_Modes mode) {
     switch (mode) {
-        case Array_Modes::blank_bytes:      return "byte_skip";
+        case Array_Modes::byte_skip:      return "byte_skip";
         case Array_Modes::asc:              return "ascending";
         case Array_Modes::random: default:  return "random";
     }
@@ -284,7 +284,7 @@ __global__ void init_keys(
             }
 
             // skip every other bytes
-            if (arr_mode == Array_Modes::blank_bytes) {
+            if (arr_mode == Array_Modes::byte_skip) {
                 if constexpr ((sizeof(U) <= 8) && !Is_Long_Double) {
                     x = (x & U(0xFF00FF00FF00FF00ull)) | U(0x0055005500550055ull);
                 } else if constexpr (RTraits::has_native_u128) {

@@ -144,7 +144,7 @@ int benchmark_cub(
 
     // benchmark runs
     double ms_acc = 0.0;
-    double* timings = (double *)malloc(sizeof(*timings) * iters);
+    double* timings = (double*)malloc(sizeof(*timings) * iters);
     for (uint32_t i = 0; i < iters; ++i) {
         double temp = run_timed_iteration(rsort::set_seed_radix(seed_counter++));
         ms_acc += temp;

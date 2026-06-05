@@ -2,8 +2,9 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <cstdint>
 #include <cstdio>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include "radix_kernel.cuh"
@@ -517,7 +518,7 @@ struct Benchmark_Context {
         double *d = nullptr;
 
         void init(uint32_t iters) {
-            d = (double *)malloc(sizeof(double) * iters);
+            d = (double*)malloc(sizeof(*d) * iters);
         }
 
         void calculate(uint32_t iters, Len_T n) {
@@ -536,7 +537,6 @@ struct Benchmark_Context {
         ~Timings() {
             cleanup();
         }
-
     } timings;
 
 

@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
             conf.iterations,
             conf.warmups,
             conf.warm_ms,
-            rsort::Array_Modes::random // blank_bytes
+            rsort::Array_Modes::random // byte_skip
         );
     // Validation example
     } else {

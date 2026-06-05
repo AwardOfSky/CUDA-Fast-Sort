@@ -218,7 +218,7 @@ bool validate(bool all_modes, bool desc, int iter, int warm) {
     Validation_Result total;
 
     printf("\nStarting validation tests... (%d iterations, %d warmup runs each)\n\n", iter, warm);
-    Array_Modes mode_stop = all_modes ? Array_Modes::end : Array_Modes::blank_bytes;
+    Array_Modes mode_stop = all_modes ? Array_Modes::end : Array_Modes::byte_skip;
 
     for (uint32_t m = (uint32_t)Array_Modes::start + 1; m < (uint32_t)mode_stop; ++m) {
         Array_Modes mode = (Array_Modes)m;
