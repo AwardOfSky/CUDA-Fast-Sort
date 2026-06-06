@@ -44,8 +44,11 @@
 
 // ============================== User knobs ==============================
 
-// (check validation types below)
+
+// @@@@@@@@@@@@@@@@@@@ Change the below macro to turn on or off validation! 
 #define VALIDATION_TEST                 0
+// (check validation types below)
+
 #define PAIR_VALIDATION                 1
 #define LONG_DOUBLE_VALIDATION          1
 #define U128_BIT_VALIDATION             1
@@ -95,7 +98,7 @@
 #endif
 
 
-// ======================= Validation Types =======================
+// =========================== Validation Types ===========================
 
 #define U32_TYPE    uint32_t,
 #define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128_TOKEN
@@ -103,11 +106,11 @@
 #define FP_TYPES    float, double, LONG_DOUBLE_TOKEN
 #define ALL_TYPES   INT_TYPES FP_TYPES
 
-// Change types to test HERE!!!
+// @@@@@@@@@@@ Change macro below to define the validation types to test!
 #define TYPE_SET_TEST ALL_TYPES
 
+// ========================================================================
 
-// ================================================================
 
 #if defined(_MSC_VER)
     #define RSORT_FORCEINLINE __forceinline

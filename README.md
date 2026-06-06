@@ -193,10 +193,13 @@ Configuration used for all  experiments:
 	- **OS** - Ubuntu 24.04.4 LTS x86_64
 	- **Kernel** - 6.17.0-29-generic
 - **Compilation:**
-	- **nvcc flags** - -O3 -arch=sm_86
+	- **nvcc flags** - -O3 -arch=sm_86 <sup>2</sup>
 
 <sup>1</sup> No background processes running; headless (no displays attached).
-	
+
+<sup>2</sup> As most of the code is run on the device and therefore compiled with NVCC, -O3 does not do much. In testing, as a curiosity, setting -O0 and -O3 were shown to yield very similar timings.
+
+
 ### Data collection
 
 Unless expressed otherwise, all collected data points represent an average of 30 runs, with a warmup of at least 250 ms (or 10 runs, whichever takes longer). This will be referred to as the _steady-state_ configuration.

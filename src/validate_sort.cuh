@@ -31,16 +31,19 @@
     #define LONG_DOUBLE_TOKEN
 #endif
 
-// ======================= Validation Types =======================
+
+// ================================ Validation Types ================================
 #define U32_TYPE    uint32_t,
 #define UINT_TYPES  U32_TYPE uint8_t, uint16_t, uint64_t, NATIVE_U128_TOKEN
 #define INT_TYPES   UINT_TYPES int16_t, int8_t, int32_t, int64_t, NATIVE_I128_TOKEN
 #define FP_TYPES    float, double, LONG_DOUBLE_TOKEN
 #define ALL_TYPES   INT_TYPES FP_TYPES
 
-// Change types to test HERE!!!
+// @@@@@@@@@@@ Change this macro to define the validation types to test! @@@@@@@@@@@
 #define TYPE_SET_TEST ALL_TYPES
-// ================================================================
+
+// ==================================================================================
+
 
 // TODOs: #ifdef VALIDATION_TEST include lib
 #ifndef VALIDATION_TEST
