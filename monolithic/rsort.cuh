@@ -61,12 +61,13 @@
 #define REUSE_LOOKBACK_PER_PASS         1
 
 #define USE_INLINE_LOOKBACK             0
-#define LOOKBACK_USE_NANOSLEEP_BACKOFF  1
+#define LOOKBACK_DYMANIC_WAITING        1
 
-// 2 for 18 CTAs, 1 for 38
-#define LOOKBACK_SPINS                  1
+// more SPINS for few CTAs, 1 for more CTAs
+#define LOOKBACK_USE_NANOSLEEP_BACKOFF  1
 #define LOOKBACK_NANOSLEEP_INITIAL      4
 #define LOOKBACK_NANOSLEEP_MAX          256
+#define LOOKBACK_SPINS                  1
 
 #define USE_PSUM_SHARED                 1
 #define USE_CUDA_GRAPH_SORT             1
@@ -1167,12 +1168,6 @@ __global__ void GHistogram_8bits(
 
 // =============================== Lookback ===============================
 
-static_assert(
-    !(LOOKBACK_EPOCH_TAG && !REUSE_LOOKBACK_PER_PASS && LOOKBACK_OVERRIDE),
-    "Epoch-tagged lookback requires reused per-pass lookback slices."
-);
-
-
 // Lookback templating
 template <typename T, bool Epoch> struct Lookback_Config;
 
@@ -1300,6 +1295,7 @@ static inline Lookback_Modes get_lookback_mode(size_t n) {
 template<typename Policy>
 struct Lookback {
 
+
     using T = typename Policy::T;
     using LB = typename Policy::conf;
     static constexpr auto VALUE_MASK = LB::VALUE_MASK;
@@ -1307,6 +1303,11 @@ struct Lookback {
     static constexpr bool Epoch = Policy::epoch;
     static constexpr uint32_t RADIX_BIN_SIZE = radix_consts::RADIX_BIN_SIZE;
     static constexpr uint32_t RADIX_BITS = radix_consts::RADIX_BITS;
+
+    static_assert(
+        !(LOOKBACK_EPOCH_TAG && !REUSE_LOOKBACK_PER_PASS && LOOKBACK_OVERRIDE),
+        "Epoch-tagged lookback requires reused per-pass lookback slices."
+    );
 
 
     // packing functions, always pack epoch bits along with publish state
@@ -1355,14 +1356,17 @@ struct Lookback {
     static __device__ RSORT_FORCEINLINE void nano_wait(T* raw, const volatile T* ptr, T epoch_bits) {
 #if LOOKBACK_USE_NANOSLEEP_BACKOFF && (__CUDA_ARCH__ >= 700)
         if (invalid_lookback_state(*raw, epoch_bits)) {
+
             uint32_t backoff = LOOKBACK_NANOSLEEP_INITIAL;
+
             while (invalid_lookback_state(*raw, epoch_bits)) {
-        
                 __nanosleep(backoff);
                 *raw = *ptr;
                 if (backoff < LOOKBACK_NANOSLEEP_MAX) {
+                    
                     //backoff += LOOKBACK_NANOSLEEP_INITIAL; // linear
                     backoff <<= 2;
+
                 }
             }
         }
@@ -1404,11 +1408,18 @@ struct Lookback {
         const volatile T* ptr = lookback_bin + ((block_index - 1) << RADIX_BITS);
         T raw = *ptr;
 
+
         // change spin/verifications according to how hot the path is
         // 0 SPINS we lose the oppurtiny to exit
         // more than 1 we just spin our wheels, might be good for less items per thread
+#if LOOKBACK_DYMANIC_WAITING
+        // for first few skip global check, else only do 1
+        if (block_index >= 4) {
+#else
+        // always LOOKBACK_SPINS
         #pragma unroll
         for (int i = 0; i < LOOKBACK_SPINS; ++i) {
+#endif
             if (valid_global_lookback_state(raw, lb_epoch_bits)) {
                 return (raw & VALUE_MASK);
             }
@@ -1454,15 +1465,23 @@ struct Lookback {
         T raw = 0;
         bool got_global = false;
 
+
+#if LOOKBACK_DYMANIC_WAITING
+        if (block_index >= 4) {
+#else
         #pragma unroll
         for (int spin = 0; spin < LOOKBACK_SPINS; ++spin) {
+#endif
             raw = *((const volatile T*)&lookback_bin[lb]);
             if (valid_global_lookback_state(raw, lb_epoch_bits)) {
                 p = (raw & VALUE_MASK);
                 got_global = true;
+#if !LOOKBACK_DYMANIC_WAITING
                 break;
+#endif
             }
         }
+
 
         if (!got_global) {
             wait_valid_lookback_state(&raw, (const volatile T*)&lookback_bin[lb], lb_epoch_bits);
@@ -2244,7 +2263,7 @@ static void onesweep_byte_sort_enqueue(
         cudaMemsetAsync(d_gp, 0, initial_bytes, stream);
     }
     if constexpr(lb_epoch) {
-        cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, lb_els * sizeof(Lookback_T), stream);
+        cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, (lb_els - RT::RADIX_BIN_SIZE) * sizeof(Lookback_T), stream);
     }
 
     Key_T* in           = d_inout;

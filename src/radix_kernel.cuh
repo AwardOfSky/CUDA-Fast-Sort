@@ -382,7 +382,7 @@ static void onesweep_byte_sort_enqueue(
         cudaMemsetAsync(d_gp, 0, initial_bytes, stream);
     }
     if constexpr(lb_epoch) {
-        cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, lb_els * sizeof(Lookback_T), stream);
+        cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, (lb_els - RT::RADIX_BIN_SIZE) * sizeof(Lookback_T), stream);
     }
 
     Key_T* in           = d_inout;
