@@ -266,7 +266,7 @@ struct Lookback {
         // change spin/verifications according to how hot the path is
         // 0 SPINS we lose the oppurtiny to exit
         // more than 1 we just spin our wheels, might be good for less items per thread
-#if LOOKBACK_DYMANIC_WAITING
+#if LOOKBACK_DYMANIC_WAITING && defined(_WIN32)
         // for first few skip global check, else only do 1
         if (block_index >= 4) {
 #else
@@ -320,7 +320,7 @@ struct Lookback {
         bool got_global = false;
 
 
-#if LOOKBACK_DYMANIC_WAITING
+#if LOOKBACK_DYMANIC_WAITING && defined(_WIN32)
         if (block_index >= 4) {
 #else
         #pragma unroll
@@ -330,7 +330,7 @@ struct Lookback {
             if (valid_global_lookback_state(raw, lb_epoch_bits)) {
                 p = (raw & VALUE_MASK);
                 got_global = true;
-#if !LOOKBACK_DYMANIC_WAITING
+#if !LOOKBACK_DYMANIC_WAITING || !defined(_WIN32)
                 break;
 #endif
             }
