@@ -26,6 +26,8 @@
 #include <meta>
 
 
+namespace rsort {
+
 // quick fixed_string implementation
 template<size_t N>
 struct fixed_string {
@@ -143,5 +145,7 @@ struct soa_traits {
         std::meta::define_aggregate(^^soa_type, soa_fields);
     }
 };
+
+} // namespace rsort
 
 #endif // RSORT_CPP_REFLECTION
