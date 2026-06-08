@@ -10,7 +10,6 @@
     diff sass.txt sass1.txt
 */
 
-
 #pragma once
 
 #include <cuda_runtime.h>
@@ -19,6 +18,8 @@
 #include "radix/histogram.cuh"
 #include "radix/ranker.cuh"
 #include "radix/scatter.cuh"
+#include "radix/experimental.h"
+
 
 // user knobs
 #define USE_PSUM_SHARED         1
@@ -697,9 +698,10 @@ static inline void sort_pairs_descending(
 /*
     Note:
 
-    It would be interesting to have an API for AoS input
-    and do the conversion to SoA automatically. But will
-    have to wait for reflection to get to NVCC.
+    It would be interesting to have API support for AoS input,
+    and do the conversion to SoA automatically.
+    But will have to wait for reflection to get to NVCC.
+    Check the "experimental.h" header in radix directory.
 */
 
 

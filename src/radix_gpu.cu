@@ -17,7 +17,6 @@
     - AoS API (when nvcc gets reflection)
 */
 
-
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +26,7 @@
 #include "radix_kernel.cuh"
 #include "benchmark_sort.cuh"
 #include "bench_parser.h"
+
 
 // vvv HEAVY! Only enable if you want to run validation.
 #define VALIDATION_TEST     0

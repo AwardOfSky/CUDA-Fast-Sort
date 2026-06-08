@@ -1,7 +1,7 @@
 /*
     This is rsort's monolithic header.
-    Upcdated for release versions.
-    Might not be up to date with active delevelopment!
+    Updated for release versions. Does not include experimental features.
+    MIGHT NOT be up to date with active delevelopment!
 
     Validation suite was run both in Windows (MSVC) and Linux (gcc):
         Linux: 6552/6552 tests passed (signed and unsigned 128-bit integers)
@@ -2580,9 +2580,9 @@ static inline void sort_pairs_descending(
 /*
     Note:
 
-    It would be interesting to have an API for AoS input
-    and do the conversion to SoA automatically. But will
-    have to wait for reflection to get to NVCC.
+    It would be interesting to have API support for AoS input,
+    and do the conversion to SoA automatically.
+    But will have to wait for reflection to get to NVCC.
 */
 
 
