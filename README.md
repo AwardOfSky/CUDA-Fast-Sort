@@ -197,7 +197,7 @@ Configuration used for all  experiments:
 
 <sup>1</sup> No background processes running; headless (no displays attached).
 
-<sup>2</sup> As most of the code is run on the device and therefore compiled with NVCC, -O3 does not do much. In testing, as a curiosity, setting -O0 and -O3 were shown to yield very similar timings.
+<sup>2</sup> As most of the code executed at runtime ends up being device-specific, compiled with NVCC, -O3 does not do much. In testing, as a curiosity, setting -O0 and -O3 were shown to yield very similar timings.
 
 
 ### Data collection

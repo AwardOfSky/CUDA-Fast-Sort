@@ -3,7 +3,7 @@
 
     Features:
         Reflection Prototyping
-        (To be used to support SoA to AoS API calls when NVCC gets reflection)
+        (To be used to support AoS API calls when NVCC gets reflection)
 */
 #pragma once
 
