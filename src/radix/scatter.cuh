@@ -84,6 +84,7 @@ struct Scatter {
           
         
         // Staging kernels
+        template<bool Full_Block>
         __device__ RSORT_FORCEINLINE void stage_init(
             const U (&keys)[ITEMS_PER_THREAD],
             const int (&ranks)[ITEMS_PER_THREAD],
@@ -104,8 +105,12 @@ struct Scatter {
 
             // init vals
             if constexpr(vals_staging == staging_modes::direct) {
-                if (src_local < actual_tile_items) {
+                if constexpr(Full_Block) {
                     staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
+                } else {
+                    if (src_local < actual_tile_items) {
+                        staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
+                    }
                 }
             } else if constexpr(vals_staging == staging_modes::indices) {
                 staged_vals.v[ranks[k]] = src_local;
@@ -171,17 +176,14 @@ struct Scatter {
         Value_T* __restrict__ out_vals = nullptr
     ) {
 
-
         // stage in local rank order.
         // init staging
         #pragma unroll
         for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
-            //smem->stage_init(keys, ranks, k, block_base, actual_tile_items, in_vals);
-            smem->stage_init(keys, ranks, k, block_base, actual_tile_items, src_lane_base, in_vals);
+            smem->stage_init<Full_Block>(keys, ranks, k, block_base, actual_tile_items, src_lane_base, in_vals);
 
         }
         __syncthreads();
-
 
         #pragma unroll
         for (int k = 0; k < ITEMS_PER_THREAD; ++k) {

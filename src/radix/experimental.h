@@ -53,7 +53,7 @@ struct fixed_string {
     }
 
     constexpr std::size_t size() const {
-        return N ? N - 1 : 0;
+        return N ? (N - 1) : 0;
     }
 
     constexpr std::string_view view() const {
@@ -122,11 +122,11 @@ consteval std::meta::info refl_ptr() {
 
 // reflect metadata into a C++ type
 template<std::meta::info meta>
-using refl_meta_to_type = typename[: std::meta::type_of(meta) :];
+using refl_meta_to_type = typename [: std::meta::type_of(meta) :];
 
 // reflect metadata of a type into a C++ type
 template<std::meta::info meta>
-using refl_metatype_to_type = typename[: meta :];
+using refl_metatype_to_type = typename [: meta :];
 
 
 /*
