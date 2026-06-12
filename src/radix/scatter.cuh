@@ -2,6 +2,7 @@
 // nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu.exe &&
 // cuobjdump --dump-sass radix_gpu.exe > sass1.txt &&
 // diff sass.txt sass1.txt
+
 #pragma once
 
 #include <cuda_runtime.h>
@@ -15,7 +16,7 @@
 
 
 namespace rsort {
-    
+
 template<
     typename Key_T,
     typename U,
@@ -104,15 +105,15 @@ struct Scatter {
             }
 
             // init vals
-            if constexpr(vals_staging == staging_modes::direct) {
-                if constexpr(Full_Block) {
+            if constexpr (vals_staging == staging_modes::direct) {
+                if constexpr (Full_Block) {
                     staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
                 } else {
                     if (src_local < actual_tile_items) {
                         staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
                     }
                 }
-            } else if constexpr(vals_staging == staging_modes::indices) {
+            } else if constexpr (vals_staging == staging_modes::indices) {
                 staged_vals.v[ranks[k]] = src_local;
             }
         }
@@ -161,12 +162,10 @@ struct Scatter {
         typename SMem_T
     >
     static __device__ RSORT_FORCEINLINE void scatter_staged(
-        //U* __restrict__ staged,
         SMem_T* __restrict__ smem,
         const Key_T* __restrict__ in_keys,
         const U (&keys)[ITEMS_PER_THREAD],
         const int (&ranks)[ITEMS_PER_THREAD],
-        //const Lookback_T* __restrict__ bin_offset,
         Key_T* __restrict__ out_keys,
         uint32_t actual_tile_items,
         uint32_t bit_location,

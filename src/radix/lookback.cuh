@@ -24,7 +24,8 @@
 namespace rsort {
 
 // Lookback templating
-template <typename T, bool Epoch> struct Lookback_Config;
+template<typename T, bool Epoch>
+struct Lookback_Config;
 
 // 32-bit lookback specialization
 template<bool Epoch>
@@ -58,7 +59,7 @@ struct Lookback_Config<uint64_t, Epoch> {
 
 
 // Policy Base
-template <typename T_, bool Epoch, bool Reuse>
+template<typename T_, bool Epoch, bool Reuse>
 struct Lookback_Policy_Base {
     using T = T_;
     static constexpr bool epoch = 
@@ -86,23 +87,23 @@ enum class Lookback_Modes : uint32_t {
     u64_epoch
 };
 
-template <Lookback_Modes Mode> struct Lookback_Policy;
+template<Lookback_Modes Mode> struct Lookback_Policy;
 
 
 // ================== Lookback Policy definitions ================== 
 
 // Policy Specializations <Type, Epoch, Reuse>
 
-template <>
+template<>
 struct Lookback_Policy<Lookback_Modes::u32_epoch>
     : Lookback_Policy_Base<uint32_t, true, true> {};
 
 // <uint32_t, false, false> for slightly faster(?), more memory expensive
-template <>
+template<>
 struct Lookback_Policy<Lookback_Modes::u32_plain>
     : Lookback_Policy_Base<uint32_t, false, true> {};
 
-template <>
+template<>
 struct Lookback_Policy<Lookback_Modes::u64_epoch>
     : Lookback_Policy_Base<uint64_t, true, true> {};
 // =================================================================
@@ -166,7 +167,7 @@ struct Lookback {
 
     // packing functions, always pack epoch bits along with publish state
     static __device__ RSORT_FORCEINLINE T pack_global(T val, T epoch_bits) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK | epoch_bits;
         } else {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK;
@@ -174,7 +175,7 @@ struct Lookback {
     }
 
     static __device__ RSORT_FORCEINLINE T pack_partial(T val, T epoch_bits) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             return (val & LB::VALUE_MASK) | LB::PARTIAL_MASK | epoch_bits;
         } else {
             return (val & LB::VALUE_MASK) | LB::PARTIAL_MASK;
@@ -185,7 +186,7 @@ struct Lookback {
     // Rule #1 of high performance programming:
     // the more underscores your code has the faster it goes
     static __device__ __host__ RSORT_FORCEINLINE T pack_epoch(uint32_t epoch) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             using LB = Lookback_Config<T, Epoch>;
             return ((T)epoch & LB::EPOCH_VALUE_MASK) << LB::EPOCH_SHIFT;
         } else {
@@ -197,7 +198,7 @@ struct Lookback {
     // Note: No need to check for 0 if using Epoch bits because
     // lookback will be EPOCH_TAG filled for the first pass (and on epoch wrap)
     static __device__ RSORT_FORCEINLINE bool invalid_lookback_state(T raw, T lb) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             //return ((raw & LB::EPOCH_MASK) != lb) || (raw == 0u);
             return (raw & LB::EPOCH_MASK) != lb;
         } else {
@@ -238,7 +239,7 @@ struct Lookback {
 
 
     static __device__ RSORT_FORCEINLINE bool valid_global_lookback_state(T raw, T epoch_bits) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             return ((raw & LB::GLOBAL_MASK) != 0) && ((raw & LB::EPOCH_MASK) == epoch_bits) && (raw != 0);
         } else {
             return ((raw & LB::GLOBAL_MASK) != 0) && (raw != 0);

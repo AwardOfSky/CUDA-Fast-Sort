@@ -15,7 +15,7 @@
 
 namespace rsort {
 
-template <typename Lookback_T, typename Len_T>
+template<typename Lookback_T, typename Len_T>
 static bool check_hist_buffers(
     Len_T n,
     const Lookback_T* h_hist_ref,
@@ -53,7 +53,7 @@ static bool check_hist_buffers(
 
 // Reconstructs the digit histogram for the last pass and checks count of each radix
 // in the sorted array to assert if sorted output has the same counts.
-template <
+template<
     bool Descending,
     typename Lookback_Policy,
     typename Workspace,
@@ -81,8 +81,8 @@ static bool verify_digit_histograms(
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
     using H = histogram_tuning;
-    constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
+    uint32_t hist_blocks = H::HIST_BLOCKS;
     
 
     // timers
@@ -119,11 +119,11 @@ static bool verify_digit_histograms(
     
     // Count digits from both arrays (original and sorted)
     GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, Is_Long_Double>
-    <<<HIST_BLOCKS, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
+    <<<hist_blocks, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
     GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, Is_Long_Double>
-    <<<HIST_BLOCKS, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
+    <<<hist_blocks, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
     CHECK_CUDA(cudaGetLastError());
 
     // Copy to CPU
@@ -168,7 +168,7 @@ static bool verify_digit_histograms(
 }
 
 
-template <
+template<
     bool Descending,
     typename Workspace,
     typename Key_T,
@@ -320,7 +320,7 @@ static bool verify_order(
 }
 
 
-template <typename T, typename Len_T>
+template<typename T, typename Len_T>
 static bool can_validate_pair(bool validation, Len_T n) {
     return validation && 
         ((sizeof(T) == 8) || 
@@ -378,7 +378,7 @@ static bool verify_sorted_policy(
     }
 
     bool ret = order_ok && hist_ok && pairs_ok;
-    if(!ret) {
+    if (!ret) {
         printf("Post sort checks [order, hist, pair]: [%d, %d, %d]\n", order_ok, hist_ok, pairs_ok);
     }
 
@@ -755,7 +755,7 @@ struct Benchmark_Context {
     
 
     void print_validation_stats(bool test_valid) {
-        if(validation) {
+        if (validation) {
             // verification stats
             std::string pair_str = "Pair: " + std::string(val_name) + ",";
             printf(

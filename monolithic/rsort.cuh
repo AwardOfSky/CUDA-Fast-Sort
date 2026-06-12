@@ -21,7 +21,6 @@
     - AoS API (when nvcc gets reflection)
 */
 
-
 #pragma once
 
 #include <cuda_runtime.h>
@@ -336,6 +335,7 @@ struct radix_tuning : radix_consts {
 
 struct native_128bit_support {
 
+
     // 128 bit support (for integer types in GCC and Clang)
 #if defined(__SIZEOF_INT128__)
     using native_u128 = unsigned __int128;
@@ -349,7 +349,7 @@ struct native_128bit_support {
 
 
     // always returns false in CUDA code
-    template <typename T>
+    template<typename T>
     static constexpr bool is_valid_long_double() {
     
         constexpr bool IS_LONG_DOUBLE = std::is_same_v<T, long double>;
@@ -359,6 +359,7 @@ struct native_128bit_support {
             (sizeof(long double) == 8),
             "Sorting long doubles expects 64 or 128 bits."
         );
+
         // if long double is 64-bit, there is no need for any of this...
         // (sizeof(long double) == 16) acts as: 
         // are we calling this from CUDA or host code?
@@ -369,23 +370,25 @@ struct native_128bit_support {
 
 
 #if defined(__SIZEOF_INT128__)
-    template <typename T>
+    template<typename T>
     static constexpr bool is_native_128_integral_v =
         std::is_same_v<T, native_u128> ||
         std::is_same_v<T, native_i128>;
 #else
-    template <typename T>
+    template<typename T>
     static constexpr bool is_native_128_integral_v = false;
 #endif
 
-    template <typename T>
+
+    template<typename T>
     static constexpr bool is_valid_128bit_t = 
         has_native_u128 && (
             is_native_128_integral_v<T> ||
             is_valid_long_double<T>()
         );
 
-    template <typename T>
+
+    template<typename T>
     using try_valid_long_double_t = std::conditional_t<
         is_valid_long_double<T>() && has_native_u128,
         native_u128,
@@ -394,7 +397,7 @@ struct native_128bit_support {
 };
 
 
-// is_ld (is long double) is needed cause CUDA does not support long doubles
+// Is_Long_Double is needed 'cause CUDA demotes ld to double
 template<typename T, bool Is_Long_Double = false>
 struct radix_traits : native_128bit_support {
 
@@ -427,7 +430,7 @@ struct radix_traits : native_128bit_support {
     
     // unsigned and type T bit convertion (for twiddling)  
     static __device__ RSORT_FORCEINLINE T bits_to_type(unsigned_of x) {
-        if constexpr(std::is_same_v<T, float>) {
+        if constexpr (std::is_same_v<T, float>) {
             return __uint_as_float(x);
         } else if constexpr (std::is_same_v<T, double>) {
             return __longlong_as_double(int64_t(x));
@@ -438,9 +441,9 @@ struct radix_traits : native_128bit_support {
 
 
     static __device__ RSORT_FORCEINLINE unsigned_of type_to_bits(T x) {
-        if constexpr(std::is_same_v<T, float>) {
+        if constexpr (std::is_same_v<T, float>) {
             return __float_as_uint(x);
-        } else if constexpr(std::is_same_v<T, double>) {
+        } else if constexpr (std::is_same_v<T, double>) {
             return unsigned_of(__double_as_longlong(x));
         } else {
             return unsigned_of(x);
@@ -449,7 +452,7 @@ struct radix_traits : native_128bit_support {
 
 
     // twiddling kernels
-    template <bool Descending>
+    template<bool Descending>
     static __host__ __device__ RSORT_FORCEINLINE unsigned_of twiddle_in(T x) {
         using U = unsigned_of;
 
@@ -492,9 +495,7 @@ struct radix_traits : native_128bit_support {
 
 
     // Key extractor
-    //template<bool Descending>
     static __device__ RSORT_FORCEINLINE uint32_t extract_key(unsigned_of x, unsigned_of bit) {
-        //if constexpr (Descending) x = ~x;
         return (x >> bit) & radix_consts::RADIX_MASK;
     }
 };
@@ -600,7 +601,7 @@ __device__ __host__ RSORT_FORCEINLINE T div_round_up(T v, T d) {
 
 // get name of type - namespace compliant
 // ChatGPT and stackoverflow black magic :D
-template <typename T>
+template<typename T>
 constexpr std::string_view type_name() {
     std::string_view name = __PRETTY_FUNCTION__;
 
@@ -630,7 +631,7 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
-template <typename T>
+template<typename T>
 inline uint32_t ceil_log2_size(T n) {
     static_assert(
         std::is_integral_v<T> && !std::is_same_v<T, bool>,
@@ -952,11 +953,11 @@ void sleep_ms(long milliseconds) {
 // ============================== Histogram ===============================
 
 struct histogram_tuning {
-    static constexpr uint32_t CARD_SMS                  = 92;
+
+    // 5, 6   // 4, 8   // 6, 4
     static constexpr uint32_t GHIST_THREADS             = 256;
-    static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * 8;
+    static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * 6;
     static constexpr uint32_t GHIST_ITEMS_PER_THREAD    = GHIST_ITEM_PER_BLOCK / GHIST_THREADS;
-    static constexpr uint32_t HIST_BLOCKS               = CARD_SMS * 4;
 
     static constexpr uint32_t SCAN256_WARPS     = radix_consts::RADIX_BIN_SIZE / WARP_SIZE;
     static constexpr bool EXCLUSIVE_SCAN_256    = 
@@ -966,11 +967,23 @@ struct histogram_tuning {
         (GHIST_ITEM_PER_BLOCK % GHIST_THREADS) == 0,
         "GHIST_ITEM_PER_BLOCK must be divisible by GHIST_THREADS"
     );
+
+
+    inline static uint32_t CARD_SMS     = 0;
+    inline static uint32_t HIST_BLOCKS  = 0;
+
+    static void init(int device = 0) {
+        cudaDeviceProp prop{};
+        cudaGetDeviceProperties(&prop, device);
+
+        CARD_SMS = uint32_t(prop.multiProcessorCount);
+        HIST_BLOCKS = CARD_SMS * 4;
+    }
 };
 
 
 // simple block-wide exclusive scan for nElement <= blockDim.x
-template <typename T>
+template<typename T>
 __device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
     bool active = (int)threadIdx.x < n_element;
     T value = active ? s_mem[threadIdx.x] : 0;
@@ -1045,7 +1058,7 @@ __device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
 
 
 // Main histogram kernel performaing a global count of all passes
-template <
+template<
     bool Descending,
     typename Lookback_T,
     typename Key_T,
@@ -1075,7 +1088,7 @@ __global__ void GHistogram_8bits(
 
 
     __shared__ uint32_t local_counters[RADIX_PASSES][RADIX_BIN_SIZE];
-    // TODOs: replace this?
+
     // if constexpr (EXCLUSIVE_SCAN_256) {
     __shared__ uint32_t scan_warp_sums[SCAN256_WARPS];
     //}
@@ -1172,7 +1185,8 @@ __global__ void GHistogram_8bits(
 // =============================== Lookback ===============================
 
 // Lookback templating
-template <typename T, bool Epoch> struct Lookback_Config;
+template<typename T, bool Epoch>
+struct Lookback_Config;
 
 // 32-bit lookback specialization
 template<bool Epoch>
@@ -1206,7 +1220,7 @@ struct Lookback_Config<uint64_t, Epoch> {
 
 
 // Policy Base
-template <typename T_, bool Epoch, bool Reuse>
+template<typename T_, bool Epoch, bool Reuse>
 struct Lookback_Policy_Base {
     using T = T_;
     static constexpr bool epoch = 
@@ -1234,23 +1248,23 @@ enum class Lookback_Modes : uint32_t {
     u64_epoch
 };
 
-template <Lookback_Modes Mode> struct Lookback_Policy;
+template<Lookback_Modes Mode> struct Lookback_Policy;
 
 
 // ================== Lookback Policy definitions ================== 
 
 // Policy Specializations <Type, Epoch, Reuse>
 
-template <>
+template<>
 struct Lookback_Policy<Lookback_Modes::u32_epoch>
     : Lookback_Policy_Base<uint32_t, true, true> {};
 
 // <uint32_t, false, false> for slightly faster(?), more memory expensive
-template <>
+template<>
 struct Lookback_Policy<Lookback_Modes::u32_plain>
     : Lookback_Policy_Base<uint32_t, false, true> {};
 
-template <>
+template<>
 struct Lookback_Policy<Lookback_Modes::u64_epoch>
     : Lookback_Policy_Base<uint64_t, true, true> {};
 // =================================================================
@@ -1314,7 +1328,7 @@ struct Lookback {
 
     // packing functions, always pack epoch bits along with publish state
     static __device__ RSORT_FORCEINLINE T pack_global(T val, T epoch_bits) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK | epoch_bits;
         } else {
             return (val & LB::VALUE_MASK) | LB::GLOBAL_MASK;
@@ -1322,7 +1336,7 @@ struct Lookback {
     }
 
     static __device__ RSORT_FORCEINLINE T pack_partial(T val, T epoch_bits) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             return (val & LB::VALUE_MASK) | LB::PARTIAL_MASK | epoch_bits;
         } else {
             return (val & LB::VALUE_MASK) | LB::PARTIAL_MASK;
@@ -1333,7 +1347,7 @@ struct Lookback {
     // Rule #1 of high performance programming:
     // the more underscores your code has the faster it goes
     static __device__ __host__ RSORT_FORCEINLINE T pack_epoch(uint32_t epoch) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             using LB = Lookback_Config<T, Epoch>;
             return ((T)epoch & LB::EPOCH_VALUE_MASK) << LB::EPOCH_SHIFT;
         } else {
@@ -1345,7 +1359,7 @@ struct Lookback {
     // Note: No need to check for 0 if using Epoch bits because
     // lookback will be EPOCH_TAG filled for the first pass (and on epoch wrap)
     static __device__ RSORT_FORCEINLINE bool invalid_lookback_state(T raw, T lb) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             //return ((raw & LB::EPOCH_MASK) != lb) || (raw == 0u);
             return (raw & LB::EPOCH_MASK) != lb;
         } else {
@@ -1386,7 +1400,7 @@ struct Lookback {
 
 
     static __device__ RSORT_FORCEINLINE bool valid_global_lookback_state(T raw, T epoch_bits) {
-        if constexpr(Epoch) {
+        if constexpr (Epoch) {
             return ((raw & LB::GLOBAL_MASK) != 0) && ((raw & LB::EPOCH_MASK) == epoch_bits) && (raw != 0);
         } else {
             return ((raw & LB::GLOBAL_MASK) != 0) && (raw != 0);
@@ -1555,7 +1569,7 @@ struct Radix_Ranker {
         uint32_t scan_warp_sums[SCAN256_WARPS];
     };
 
-    template <bool Full_Tile, bool Descending, typename Lookback_Policy>
+    template<bool Full_Tile, bool Descending, typename Lookback_Policy>
     static __device__ RSORT_FORCEINLINE void match_early_counts(
         Temp_Storage& temp_storage,
         typename RTraits::unsigned_of (&keys)[ITEMS_PER_THREAD],
@@ -1669,7 +1683,7 @@ struct Radix_Ranker {
 
 
 // =============================== Scatter ================================
-    
+
 template<
     typename Key_T,
     typename U,
@@ -1758,15 +1772,15 @@ struct Scatter {
             }
 
             // init vals
-            if constexpr(vals_staging == staging_modes::direct) {
-                if constexpr(Full_Block) {
+            if constexpr (vals_staging == staging_modes::direct) {
+                if constexpr (Full_Block) {
                     staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
                 } else {
                     if (src_local < actual_tile_items) {
                         staged_vals.v[ranks[k]] = in_vals[block_base + (Len_T)src_local];
                     }
                 }
-            } else if constexpr(vals_staging == staging_modes::indices) {
+            } else if constexpr (vals_staging == staging_modes::indices) {
                 staged_vals.v[ranks[k]] = src_local;
             }
         }
@@ -1815,12 +1829,10 @@ struct Scatter {
         typename SMem_T
     >
     static __device__ RSORT_FORCEINLINE void scatter_staged(
-        //U* __restrict__ staged,
         SMem_T* __restrict__ smem,
         const Key_T* __restrict__ in_keys,
         const U (&keys)[ITEMS_PER_THREAD],
         const int (&ranks)[ITEMS_PER_THREAD],
-        //const Lookback_T* __restrict__ bin_offset,
         Key_T* __restrict__ out_keys,
         uint32_t actual_tile_items,
         uint32_t bit_location,
@@ -1830,7 +1842,6 @@ struct Scatter {
         Value_T* __restrict__ out_vals = nullptr
     ) {
 
-
         // stage in local rank order.
         // init staging
         #pragma unroll
@@ -1839,7 +1850,6 @@ struct Scatter {
 
         }
         __syncthreads();
-
 
         #pragma unroll
         for (int k = 0; k < ITEMS_PER_THREAD; ++k) {
@@ -1859,6 +1869,7 @@ struct Scatter {
     }
     
 };
+
 
 /*
 the conditional array struct still declares 1 element.
@@ -1918,7 +1929,7 @@ does not seem like good practise.
 // ============================ Main Kernels ==============================
 
 // Portable workspace struct for post-sort checks
-template <
+template<
     typename Key_T,
     typename Lookback_T,
     typename Len_T,
@@ -1954,7 +1965,7 @@ struct Sort_Workspace {
 
 
     // build workspace - set memory pointers according to policy 
-    template <typename Lookback_Policy>
+    template<typename Lookback_Policy>
     static inline Sort_Workspace build(Len_T n) {
 
         Sort_Workspace ws;
@@ -2041,7 +2052,7 @@ void onesweep_byte(
     constexpr Tuning_T RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr Tuning_T RADIX_BITS = RT::RADIX_BITS;
     
-    static_assert(RADIX_BIN_SIZE == 256, "CUB-like kernel expects 8-bit radix.");
+    static_assert(RADIX_BIN_SIZE == 256, "Onesweep kernel expects 8-bit radix.");
 
 
     __shared__ typename Scatter::SMem smem;
@@ -2179,7 +2190,7 @@ void onesweep_byte(
 
 
 // Generates the skip mask for early-exiting
-template <typename Lookback_T, typename Key_T, typename Len_T>
+template<typename Lookback_T, typename Key_T, typename Len_T>
 static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) {
     
     using RT = radix_tuning<Key_T>;
@@ -2190,9 +2201,9 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
     cudaMemcpy(h_gp, d_gp, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost);
 
     uint32_t skip_mask = 0u;
-    for(uint32_t p = 0; p < RADIX_PASSES; ++p) {
+    for (uint32_t p = 0; p < RADIX_PASSES; ++p) {
         const Lookback_T* row = h_gp + (size_t)p * RADIX_BIN_SIZE;
-        for(uint32_t b = 0; b < RADIX_BIN_SIZE; ++b) {
+        for (uint32_t b = 0; b < RADIX_BIN_SIZE; ++b) {
             
             Lookback_T lo = row[b];
             Lookback_T hi = (b + 1u < RADIX_BIN_SIZE) ? row[b + 1u] : (Lookback_T)n;
@@ -2200,12 +2211,6 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
                 skip_mask |= (1u << p);
                 break;
             }
-            /*
-            if(row[b] == n) {
-                skip_mask |= (1u << p);
-                break;
-            }
-            */
         }
     }
 
@@ -2215,7 +2220,7 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 
 // Enrty point of the sorting kernel
 // TODOs: this could use some refactoring
-template <
+template<
     bool Descending,
     typename Lookback_Policy,
     typename Key_T_tentative,
@@ -2256,19 +2261,22 @@ static void onesweep_byte_sort_enqueue(
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
 
     using H = histogram_tuning;
-    constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
 
+    
+    //initialize histogram
+    H::init();
+    uint32_t hist_blocks = H::HIST_BLOCKS;
 
     // conditionally call memsets according to lookback policy
-    if constexpr(lb_reuse) {
+    if constexpr (lb_reuse) {
         size_t initial_bytes = (size_t)((uint8_t*)(d_counter + 1) - (uint8_t*)d_gp);
         cudaMemsetAsync(d_gp, 0, initial_bytes, stream);
-    } else if constexpr(!lb_epoch) {
+    } else if constexpr (!lb_epoch) {
         size_t initial_bytes = (size_t)((uint8_t*)(d_look_partial + lb_els) - (uint8_t*)d_gp);
         cudaMemsetAsync(d_gp, 0, initial_bytes, stream);
     }
-    if constexpr(lb_epoch) {
+    if constexpr (lb_epoch) {
         cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, (lb_els - RT::RADIX_BIN_SIZE) * sizeof(Lookback_T), stream);
     }
 
@@ -2280,15 +2288,14 @@ static void onesweep_byte_sort_enqueue(
     // Histogram call - template on dynamic work stealing (using lookback type for compile time branching)
     if constexpr (sizeof(Lookback_T) <= sizeof(uint32_t)) {
         GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, true>
-        <<<HIST_BLOCKS, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
+        <<<hist_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     } else {
-        uint32_t h_blocks = HIST_BLOCKS;
         Len_T hist_tiles = div_round_up<Len_T>(n, H::GHIST_ITEM_PER_BLOCK);
-        if (h_blocks > hist_tiles) {
-            h_blocks = hist_tiles;
+        if (hist_blocks > hist_tiles) {
+            hist_blocks = hist_tiles;
         }
         GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, false>
-        <<<h_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
+        <<<hist_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     }
 
     // build skip mask if doing early exit
@@ -2363,7 +2370,7 @@ static void onesweep_byte_sort_enqueue(
 
 
 // Sorting 
-template <
+template<
     bool Descending,
     typename Lookback_Policy,
     typename Key_T,
@@ -2587,12 +2594,13 @@ static inline void sort_pairs_descending(
     It would be interesting to have API support for AoS input,
     and do the conversion to SoA automatically.
     But will have to wait for reflection to get to NVCC.
+    Check the "experimental.h" header in radix directory.
 */
 
 
 // ========================= Benchmark Kernels ============================
 
-template <typename Lookback_T, typename Len_T>
+template<typename Lookback_T, typename Len_T>
 static bool check_hist_buffers(
     Len_T n,
     const Lookback_T* h_hist_ref,
@@ -2630,7 +2638,7 @@ static bool check_hist_buffers(
 
 // Reconstructs the digit histogram for the last pass and checks count of each radix
 // in the sorted array to assert if sorted output has the same counts.
-template <
+template<
     bool Descending,
     typename Lookback_Policy,
     typename Workspace,
@@ -2658,8 +2666,8 @@ static bool verify_digit_histograms(
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
     using H = histogram_tuning;
-    constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
+    uint32_t hist_blocks = H::HIST_BLOCKS;
     
 
     // timers
@@ -2696,11 +2704,11 @@ static bool verify_digit_histograms(
     
     // Count digits from both arrays (original and sorted)
     GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, Is_Long_Double>
-    <<<HIST_BLOCKS, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
+    <<<hist_blocks, GHIST_THREADS>>>(workspace_view.tmp, n, d_hist_ref, 0u, d_counter);
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaMemset(d_counter, 0, sizeof(uint32_t)));
     GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, Is_Long_Double>
-    <<<HIST_BLOCKS, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
+    <<<hist_blocks, GHIST_THREADS>>>(d_sorted, n, d_hist_chk, 0u, d_counter);
     CHECK_CUDA(cudaGetLastError());
 
     // Copy to CPU
@@ -2745,7 +2753,7 @@ static bool verify_digit_histograms(
 }
 
 
-template <
+template<
     bool Descending,
     typename Workspace,
     typename Key_T,
@@ -2897,7 +2905,7 @@ static bool verify_order(
 }
 
 
-template <typename T, typename Len_T>
+template<typename T, typename Len_T>
 static bool can_validate_pair(bool validation, Len_T n) {
     return validation && 
         ((sizeof(T) == 8) || 
@@ -2955,7 +2963,7 @@ static bool verify_sorted_policy(
     }
 
     bool ret = order_ok && hist_ok && pairs_ok;
-    if(!ret) {
+    if (!ret) {
         printf("Post sort checks [order, hist, pair]: [%d, %d, %d]\n", order_ok, hist_ok, pairs_ok);
     }
 
@@ -3114,7 +3122,6 @@ struct Benchmark_Context {
         ~Timings() {
             cleanup();
         }
-
     } timings;
 
 
@@ -3333,7 +3340,7 @@ struct Benchmark_Context {
     
 
     void print_validation_stats(bool test_valid) {
-        if(validation) {
+        if (validation) {
             // verification stats
             std::string pair_str = "Pair: " + std::string(val_name) + ",";
             printf(

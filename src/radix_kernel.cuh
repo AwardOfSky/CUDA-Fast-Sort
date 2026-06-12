@@ -32,7 +32,7 @@
 namespace rsort {
 
 // Portable workspace struct for post-sort checks
-template <
+template<
     typename Key_T,
     typename Lookback_T,
     typename Len_T,
@@ -68,7 +68,7 @@ struct Sort_Workspace {
 
 
     // build workspace - set memory pointers according to policy 
-    template <typename Lookback_Policy>
+    template<typename Lookback_Policy>
     static inline Sort_Workspace build(Len_T n) {
 
         Sort_Workspace ws;
@@ -155,7 +155,7 @@ void onesweep_byte(
     constexpr Tuning_T RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr Tuning_T RADIX_BITS = RT::RADIX_BITS;
     
-    static_assert(RADIX_BIN_SIZE == 256, "CUB-like kernel expects 8-bit radix.");
+    static_assert(RADIX_BIN_SIZE == 256, "Onesweep kernel expects 8-bit radix.");
 
 
     __shared__ typename Scatter::SMem smem;
@@ -293,7 +293,7 @@ void onesweep_byte(
 
 
 // Generates the skip mask for early-exiting
-template <typename Lookback_T, typename Key_T, typename Len_T>
+template<typename Lookback_T, typename Key_T, typename Len_T>
 static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) {
     
     using RT = radix_tuning<Key_T>;
@@ -304,9 +304,9 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
     cudaMemcpy(h_gp, d_gp, HIST_ELEMS * sizeof(Lookback_T), cudaMemcpyDeviceToHost);
 
     uint32_t skip_mask = 0u;
-    for(uint32_t p = 0; p < RADIX_PASSES; ++p) {
+    for (uint32_t p = 0; p < RADIX_PASSES; ++p) {
         const Lookback_T* row = h_gp + (size_t)p * RADIX_BIN_SIZE;
-        for(uint32_t b = 0; b < RADIX_BIN_SIZE; ++b) {
+        for (uint32_t b = 0; b < RADIX_BIN_SIZE; ++b) {
             
             Lookback_T lo = row[b];
             Lookback_T hi = (b + 1u < RADIX_BIN_SIZE) ? row[b + 1u] : (Lookback_T)n;
@@ -314,12 +314,6 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
                 skip_mask |= (1u << p);
                 break;
             }
-            /*
-            if(row[b] == n) {
-                skip_mask |= (1u << p);
-                break;
-            }
-            */
         }
     }
 
@@ -329,7 +323,7 @@ static uint32_t compute_uniform_pass_skip_mask(const Lookback_T* d_gp, Len_T n) 
 
 // Enrty point of the sorting kernel
 // TODOs: this could use some refactoring
-template <
+template<
     bool Descending,
     typename Lookback_Policy,
     typename Key_T_tentative,
@@ -370,19 +364,22 @@ static void onesweep_byte_sort_enqueue(
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
 
     using H = histogram_tuning;
-    constexpr uint32_t HIST_BLOCKS = H::HIST_BLOCKS;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
 
+    
+    //initialize histogram
+    H::init();
+    uint32_t hist_blocks = H::HIST_BLOCKS;
 
     // conditionally call memsets according to lookback policy
-    if constexpr(lb_reuse) {
+    if constexpr (lb_reuse) {
         size_t initial_bytes = (size_t)((uint8_t*)(d_counter + 1) - (uint8_t*)d_gp);
         cudaMemsetAsync(d_gp, 0, initial_bytes, stream);
-    } else if constexpr(!lb_epoch) {
+    } else if constexpr (!lb_epoch) {
         size_t initial_bytes = (size_t)((uint8_t*)(d_look_partial + lb_els) - (uint8_t*)d_gp);
         cudaMemsetAsync(d_gp, 0, initial_bytes, stream);
     }
-    if constexpr(lb_epoch) {
+    if constexpr (lb_epoch) {
         cudaMemsetAsync(d_look_partial, LB::EPOCH_TAG, (lb_els - RT::RADIX_BIN_SIZE) * sizeof(Lookback_T), stream);
     }
 
@@ -394,15 +391,14 @@ static void onesweep_byte_sort_enqueue(
     // Histogram call - template on dynamic work stealing (using lookback type for compile time branching)
     if constexpr (sizeof(Lookback_T) <= sizeof(uint32_t)) {
         GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, true>
-        <<<HIST_BLOCKS, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
+        <<<hist_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     } else {
-        uint32_t h_blocks = HIST_BLOCKS;
         Len_T hist_tiles = div_round_up<Len_T>(n, H::GHIST_ITEM_PER_BLOCK);
-        if (h_blocks > hist_tiles) {
-            h_blocks = hist_tiles;
+        if (hist_blocks > hist_tiles) {
+            hist_blocks = hist_tiles;
         }
         GHistogram_8bits<Descending, Lookback_T, Key_T, Len_T, is_ld, false>
-        <<<h_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
+        <<<hist_blocks, GHIST_THREADS, 0, stream>>>(d_inout, n, d_gp, 0u, d_counter);
     }
 
     // build skip mask if doing early exit
@@ -477,7 +473,7 @@ static void onesweep_byte_sort_enqueue(
 
 
 // Sorting 
-template <
+template<
     bool Descending,
     typename Lookback_Policy,
     typename Key_T,

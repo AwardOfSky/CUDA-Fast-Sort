@@ -119,7 +119,7 @@ __device__ __host__ RSORT_FORCEINLINE T div_round_up(T v, T d) {
 
 // get name of type - namespace compliant
 // ChatGPT and stackoverflow black magic :D
-template <typename T>
+template<typename T>
 constexpr std::string_view type_name() {
     std::string_view name = __PRETTY_FUNCTION__;
 
@@ -149,7 +149,7 @@ constexpr std::string_view type_name() {
 
 namespace rsort {
 
-template <typename T>
+template<typename T>
 inline uint32_t ceil_log2_size(T n) {
     static_assert(
         std::is_integral_v<T> && !std::is_same_v<T, bool>,

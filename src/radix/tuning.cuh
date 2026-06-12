@@ -242,7 +242,7 @@ struct native_128bit_support {
 
 
     // always returns false in CUDA code
-    template <typename T>
+    template<typename T>
     static constexpr bool is_valid_long_double() {
     
         constexpr bool IS_LONG_DOUBLE = std::is_same_v<T, long double>;
@@ -263,17 +263,17 @@ struct native_128bit_support {
 
 
 #if defined(__SIZEOF_INT128__)
-    template <typename T>
+    template<typename T>
     static constexpr bool is_native_128_integral_v =
         std::is_same_v<T, native_u128> ||
         std::is_same_v<T, native_i128>;
 #else
-    template <typename T>
+    template<typename T>
     static constexpr bool is_native_128_integral_v = false;
 #endif
 
 
-    template <typename T>
+    template<typename T>
     static constexpr bool is_valid_128bit_t = 
         has_native_u128 && (
             is_native_128_integral_v<T> ||
@@ -281,7 +281,7 @@ struct native_128bit_support {
         );
 
 
-    template <typename T>
+    template<typename T>
     using try_valid_long_double_t = std::conditional_t<
         is_valid_long_double<T>() && has_native_u128,
         native_u128,
@@ -290,7 +290,7 @@ struct native_128bit_support {
 };
 
 
-// is_ld (is long double) is needed cause CUDA demotes ld to double
+// Is_Long_Double is needed 'cause CUDA demotes ld to double
 template<typename T, bool Is_Long_Double = false>
 struct radix_traits : native_128bit_support {
 
@@ -323,7 +323,7 @@ struct radix_traits : native_128bit_support {
     
     // unsigned and type T bit convertion (for twiddling)  
     static __device__ RSORT_FORCEINLINE T bits_to_type(unsigned_of x) {
-        if constexpr(std::is_same_v<T, float>) {
+        if constexpr (std::is_same_v<T, float>) {
             return __uint_as_float(x);
         } else if constexpr (std::is_same_v<T, double>) {
             return __longlong_as_double(int64_t(x));
@@ -334,9 +334,9 @@ struct radix_traits : native_128bit_support {
 
 
     static __device__ RSORT_FORCEINLINE unsigned_of type_to_bits(T x) {
-        if constexpr(std::is_same_v<T, float>) {
+        if constexpr (std::is_same_v<T, float>) {
             return __float_as_uint(x);
-        } else if constexpr(std::is_same_v<T, double>) {
+        } else if constexpr (std::is_same_v<T, double>) {
             return unsigned_of(__double_as_longlong(x));
         } else {
             return unsigned_of(x);
@@ -345,7 +345,7 @@ struct radix_traits : native_128bit_support {
 
 
     // twiddling kernels
-    template <bool Descending>
+    template<bool Descending>
     static __host__ __device__ RSORT_FORCEINLINE unsigned_of twiddle_in(T x) {
         using U = unsigned_of;
 

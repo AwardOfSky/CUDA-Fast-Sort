@@ -10,11 +10,14 @@
 namespace rsort {
 
 struct histogram_tuning {
-    static constexpr uint32_t CARD_SMS                  = 92;
+
+    // tunings: (5, 6), (4, 8), (6, 4)
+    static constexpr uint32_t GHIST_MULTIPLIER          = 6;
+    static constexpr uint32_t BLOCK_MULTIPLIER          = 4;
+    
     static constexpr uint32_t GHIST_THREADS             = 256;
-    static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * 8;
+    static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * GHIST_MULTIPLIER;
     static constexpr uint32_t GHIST_ITEMS_PER_THREAD    = GHIST_ITEM_PER_BLOCK / GHIST_THREADS;
-    static constexpr uint32_t HIST_BLOCKS               = CARD_SMS * 4;
 
     static constexpr uint32_t SCAN256_WARPS     = radix_consts::RADIX_BIN_SIZE / WARP_SIZE;
     static constexpr bool EXCLUSIVE_SCAN_256    = 
@@ -24,11 +27,23 @@ struct histogram_tuning {
         (GHIST_ITEM_PER_BLOCK % GHIST_THREADS) == 0,
         "GHIST_ITEM_PER_BLOCK must be divisible by GHIST_THREADS"
     );
+
+
+    inline static uint32_t CARD_SMS     = 0;
+    inline static uint32_t HIST_BLOCKS  = 0;
+
+    static void init(int device = 0) {
+        cudaDeviceProp prop{};
+        cudaGetDeviceProperties(&prop, device);
+
+        CARD_SMS = uint32_t(prop.multiProcessorCount);
+        HIST_BLOCKS = CARD_SMS * BLOCK_MULTIPLIER;
+    }
 };
 
 
 // simple block-wide exclusive scan for nElement <= blockDim.x
-template <typename T>
+template<typename T>
 __device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
     bool active = (int)threadIdx.x < n_element;
     T value = active ? s_mem[threadIdx.x] : 0;
@@ -103,7 +118,7 @@ __device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
 
 
 // Main histogram kernel performaing a global count of all passes
-template <
+template<
     bool Descending,
     typename Lookback_T,
     typename Key_T,
@@ -133,7 +148,7 @@ __global__ void GHistogram_8bits(
 
 
     __shared__ uint32_t local_counters[RADIX_PASSES][RADIX_BIN_SIZE];
-    // TODOs: replace this?
+
     // if constexpr (EXCLUSIVE_SCAN_256) {
     __shared__ uint32_t scan_warp_sums[SCAN256_WARPS];
     //}

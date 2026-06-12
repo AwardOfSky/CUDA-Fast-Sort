@@ -58,7 +58,7 @@ struct Radix_Ranker {
         uint32_t scan_warp_sums[SCAN256_WARPS];
     };
 
-    template <bool Full_Tile, bool Descending, typename Lookback_Policy>
+    template<bool Full_Tile, bool Descending, typename Lookback_Policy>
     static __device__ RSORT_FORCEINLINE void match_early_counts(
         Temp_Storage& temp_storage,
         typename RTraits::unsigned_of (&keys)[ITEMS_PER_THREAD],

@@ -1,7 +1,7 @@
 // Validation header
 // example: ./radix_gpu --validation --iterations 1 --warmup 0
-#pragma once
 
+#pragma once
 
 #include <cuda_runtime.h>
 #include <cstdint>
