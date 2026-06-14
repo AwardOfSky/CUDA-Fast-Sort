@@ -9,6 +9,7 @@ bin/
 # specifics
 src/cub_radix
 src/radix_gpu
+src/rsort
 monolithic/rsort
 
 # CUDA / NVCC temp

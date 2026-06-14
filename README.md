@@ -147,13 +147,21 @@ The API exposes 4 main entry points for combinations of standard/KV-pair sorting
 ## Compilation and Usage 
 
 #### Compile with:
+
 ```bash
-nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu(.exe)
+make
 ```
+
+Or manually:
+
+```bash
+nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o rsort(.exe)
+```
+
 
 #### Run:
 ```bash
-./radix_gpu
+./rsort
 ```
 
 #### Command-line flags
@@ -169,7 +177,7 @@ nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu(.exe)
 
 #### Example benchmark run:
 ```bash
-./radix_gpu --n 10000000 --iterations 30 --warmup 10
+./rsort --n 10000000 --iterations 30 --warmup 10
 ```
 Performs a benchmark run, sorting an array of 10M random elements, showing the results of an average of 30 runs, with at least 10 runs of warmup.
 
@@ -317,7 +325,7 @@ Each test performs order checks on the sorted elements (manifested value), radix
 
 ### Example validation run:
 ```bash
-./radix_gpu --validation --iterations 1 --warmup 0
+./rsort --validation --iterations 1 --warmup 0
 ```
 Performs a validation run, calling a single benchmark with no warmup for all defined array modes, for all defined sizes, including descending, and for every defined data type.
 

@@ -153,7 +153,7 @@ struct radix_consts {
 };
 
 
-// Tuning (extends constants)
+// Core tuning (extends constants)
 template<
     typename Key_T,
     typename Value_T = no_value_t,
@@ -504,6 +504,39 @@ struct radix_traits : native_128bit_support {
 // alternative interface
 template<typename T, bool Is_Long_Double = false>
 using get_unsigned_of = typename radix_traits<T, Is_Long_Double>::unsigned_of;
+
+ 
+struct histogram_tuning {
+
+    // tunings: (5, 6), (4, 8), (6, 4)
+    static constexpr uint32_t GHIST_MULTIPLIER          = 6;
+    static constexpr uint32_t BLOCK_MULTIPLIER          = 4;
+    
+    static constexpr uint32_t GHIST_THREADS             = 256;
+    static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * GHIST_MULTIPLIER;
+    static constexpr uint32_t GHIST_ITEMS_PER_THREAD    = GHIST_ITEM_PER_BLOCK / GHIST_THREADS;
+
+    static constexpr uint32_t SCAN256_WARPS     = radix_consts::RADIX_BIN_SIZE / WARP_SIZE;
+    static constexpr bool EXCLUSIVE_SCAN_256    = 
+        ((GHIST_THREADS == 256) && (radix_consts::RADIX_BIN_SIZE == 256));
+
+    static_assert(
+        (GHIST_ITEM_PER_BLOCK % GHIST_THREADS) == 0,
+        "GHIST_ITEM_PER_BLOCK must be divisible by GHIST_THREADS"
+    );
+
+
+    inline static uint32_t CARD_SMS     = 0;
+    inline static uint32_t HIST_BLOCKS  = 0;
+
+    static void init(int device = 0) {
+        cudaDeviceProp prop{};
+        cudaGetDeviceProperties(&prop, device);
+
+        CARD_SMS = uint32_t(prop.multiProcessorCount);
+        HIST_BLOCKS = CARD_SMS * BLOCK_MULTIPLIER;
+    }
+};
 
 } // namespace rsort
 
@@ -951,36 +984,6 @@ void sleep_ms(long milliseconds) {
 
 
 // ============================== Histogram ===============================
-
-struct histogram_tuning {
-
-    // 5, 6   // 4, 8   // 6, 4
-    static constexpr uint32_t GHIST_THREADS             = 256;
-    static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * 6;
-    static constexpr uint32_t GHIST_ITEMS_PER_THREAD    = GHIST_ITEM_PER_BLOCK / GHIST_THREADS;
-
-    static constexpr uint32_t SCAN256_WARPS     = radix_consts::RADIX_BIN_SIZE / WARP_SIZE;
-    static constexpr bool EXCLUSIVE_SCAN_256    = 
-        ((GHIST_THREADS == 256) && (radix_consts::RADIX_BIN_SIZE == 256));
-
-    static_assert(
-        (GHIST_ITEM_PER_BLOCK % GHIST_THREADS) == 0,
-        "GHIST_ITEM_PER_BLOCK must be divisible by GHIST_THREADS"
-    );
-
-
-    inline static uint32_t CARD_SMS     = 0;
-    inline static uint32_t HIST_BLOCKS  = 0;
-
-    static void init(int device = 0) {
-        cudaDeviceProp prop{};
-        cudaGetDeviceProperties(&prop, device);
-
-        CARD_SMS = uint32_t(prop.multiProcessorCount);
-        HIST_BLOCKS = CARD_SMS * 4;
-    }
-};
-
 
 // simple block-wide exclusive scan for nElement <= blockDim.x
 template<typename T>
