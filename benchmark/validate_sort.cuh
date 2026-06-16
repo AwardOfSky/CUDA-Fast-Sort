@@ -1,5 +1,5 @@
 // Validation header
-// example: ./radix_gpu --validation --iterations 1 --warmup 0
+// example: ./rsort --validation --iterations 1 --warmup 0
 
 #pragma once
 

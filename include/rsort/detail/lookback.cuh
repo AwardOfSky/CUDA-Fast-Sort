@@ -21,7 +21,7 @@
 #define LOOKBACK_SPINS                  1
 
 
-namespace rsort {
+namespace rsort::detail {
 
 // Lookback templating
 template<typename T, bool Epoch>
@@ -357,4 +357,4 @@ struct Lookback {
     }
 };
 
-} // namespace rsort
+} // namespace rsort::detail

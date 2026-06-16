@@ -11,22 +11,25 @@
 
 #include <cub/device/device_radix_sort.cuh>
 
-#include "radix/utils.cuh"
+#include <rsort/detail/utils.cuh>
 #include "bench_parser.h"
+
+
+namespace rd = rsort::detail;
 
 
 template<
     bool Descending,
     typename T,
     typename Len_T,
-    typename Value_T = rsort::no_value_t
+    typename Value_T = rd::no_value_t
 >
 int benchmark_cub(
 Len_T n,
 uint32_t iters,
 uint32_t warmups,
 uint32_t warm_ms,
-rsort::Array_Modes arr_mode,
+rd::Array_Modes arr_mode,
 bool validation = false);
 
 
@@ -41,12 +44,12 @@ int main(int argc, char** argv) {
     }
 
     // Benchmark example
-    bool ret = benchmark_cub<(bool)rsort::Order::ascending, uint32_t, size_t>(
+    bool ret = benchmark_cub<(bool)rd::Order::ascending, uint32_t, size_t>(
         conf.n,
         conf.iterations,
         conf.warmups,
         conf.warm_ms,
-        rsort::Array_Modes::random
+        rd::Array_Modes::random
     );
 
     return 0;
@@ -60,10 +63,10 @@ int benchmark_cub(
     uint32_t iters,
     uint32_t warmups,
     uint32_t warm_ms,
-    rsort::Array_Modes arr_mode,
+    rd::Array_Modes arr_mode,
     bool validation) {
 
-    using RT = rsort::radix_tuning<T, Value_T>;
+    using RT = rd::radix_tuning<T, Value_T>;
     static constexpr bool SORTING_PAIRS = RT::sorting_pairs;
 
     size_t temp_bytes = 0;
@@ -96,8 +99,10 @@ int benchmark_cub(
     // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
     CHECK_CUDA(cudaMalloc(&d_out, sizeof(T) * n));
+    size_t vals_bytes = 0;
     if constexpr (SORTING_PAIRS) {
-        size_t vals_bytes = align_up_power<sizeof(uint32_t)>(size_t(sizeof(Value_T)) * size_t(n));
+        // align values up n bytes 
+        vals_bytes = rd::align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n);
         CHECK_CUDA(cudaMalloc(&d_vals, vals_bytes));
         CHECK_CUDA(cudaMalloc(&d_vals_out, vals_bytes));
     }
@@ -110,13 +115,13 @@ int benchmark_cub(
     cudaEventCreate(&stop);
 
     auto run_timed_iteration = [&](uint32_t seed) {
-        rsort::init_keys<T, Len_T><<<div_round_up(n, (Len_T)256), 256>>>(
+        rd::init_keys<T, Len_T><<<rd::div_round_up(n, (Len_T)256), 256>>>(
             d_keys, n, seed, arr_mode
         );
         if constexpr (SORTING_PAIRS) {
-            rsort::init_keys<uint32_t, Len_T><<<div_round_up(n, (Len_T)256), 256>>>(
+            rd::init_keys<uint32_t, Len_T><<<rd::div_round_up(n, (Len_T)256), 256>>>(
                 (uint32_t*)d_vals,
-                align_up_power<sizeof(uint32_t)>(size_t(sizeof(Value_T)) * size_t(n)) / sizeof(uint32_t),
+                vals_bytes / sizeof(uint32_t),
                 seed,
                 arr_mode
             );
@@ -138,7 +143,7 @@ int benchmark_cub(
     uint32_t warmups_done = 0;
     uint32_t seed_counter = 0;
     while ((warmups_done < warmups) || (!validation && (warm_ms_passed < (double)warm_ms))) {
-        warm_ms_passed += run_timed_iteration(rsort::set_seed_radix(seed_counter++));
+        warm_ms_passed += run_timed_iteration(rd::set_seed_radix(seed_counter++));
         ++warmups_done;
     }
 
@@ -146,7 +151,7 @@ int benchmark_cub(
     double ms_acc = 0.0;
     double* timings = (double*)malloc(sizeof(*timings) * iters);
     for (uint32_t i = 0; i < iters; ++i) {
-        double temp = run_timed_iteration(rsort::set_seed_radix(seed_counter++));
+        double temp = run_timed_iteration(rd::set_seed_radix(seed_counter++));
         ms_acc += temp;
         timings[i] = temp;
     }
@@ -155,7 +160,7 @@ int benchmark_cub(
     double ms_avg = ms_acc / (double)iters;
     long long els = (long long)((1000.0 / ms_avg) * (double)n);
     double psel = 1'000'000'000'000.0 / (double)els;
-    double us_std = rsort::stdev(timings, ms_avg, (size_t)iters) * 1000.0;
+    double us_std = rd::stdev(timings, ms_avg, (size_t)iters) * 1000.0;
     free(timings);
 
     // Device properties
@@ -164,8 +169,8 @@ int benchmark_cub(
     cudaGetDevice(&device);
     cudaGetDeviceProperties(&prop, device);
 
-    std::string_view sv_temp = type_name<T>();
-    std::string_view svt_temp = type_name<Value_T>();
+    std::string_view sv_temp = rd::type_name<T>();
+    std::string_view svt_temp = rd::type_name<Value_T>();
     if (!validation) {
         printf("\nGPU: %s\n"
             "\nRADIX\t=\t%s\n"

@@ -8,7 +8,7 @@
 #include "utils.cuh"
 
 
-namespace rsort {
+namespace rsort::detail {
 
 // Same as in CUB header but with no ternary operator (retval at 0xFFFFFFFFu)
 __device__ RSORT_FORCEINLINE uint32_t cub_match_any_8_u32(uint32_t label) {
@@ -170,5 +170,5 @@ struct Radix_Ranker {
     }
 };
 
-} // namespace rsort
+} // namespace rsort::detail
 

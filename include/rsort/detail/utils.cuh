@@ -28,6 +28,9 @@ static_assert(
 #include "tuning.cuh"
 
 
+
+namespace rsort::detail {
+
 // ---- memory helpers ----
 template<size_t ALIGN, typename T>
 static inline T align_up_power(T x) {
@@ -147,7 +150,7 @@ constexpr std::string_view type_name() {
 }
 
 
-namespace rsort {
+// ---- radix helpers ----
 
 template<typename T>
 inline uint32_t ceil_log2_size(T n) {
@@ -467,4 +470,4 @@ void sleep_ms(long milliseconds) {
 #endif
 }
 
-} // namespace rsort
+} // namespace rsort::detail

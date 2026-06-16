@@ -23,7 +23,6 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "radix_kernel.cuh"
 #include "benchmark_sort.cuh"
 #include "bench_parser.h"
 

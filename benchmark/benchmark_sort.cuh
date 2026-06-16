@@ -7,13 +7,21 @@
 #include <limits>
 #include <string>
 #include <string_view>
-#include "radix_kernel.cuh"
+
+
+#if defined(RSORT_USE_MONOLITHIC_HEADER)
+    #include <monolithic/rsort.cuh>
+#else
+    #include <rsort/rsort.cuh>
+#endif
 
 
 #define BENCH_DEBUG     0
 
 
 namespace rsort {
+
+using namespace rsort::detail;
 
 template<typename Lookback_T, typename Len_T>
 static bool check_hist_buffers(
@@ -75,7 +83,6 @@ static bool verify_digit_histograms(
 
 
     using Lookback_T = typename Lookback_Policy::T;
-    //using Lookback_T = typename ws::LT;
     using RT = radix_tuning<Key_T, Value_T>;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;

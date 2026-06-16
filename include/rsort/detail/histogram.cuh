@@ -7,7 +7,7 @@
 #include "utils.cuh"
 
 
-namespace rsort {
+namespace rsort::detail {
 
 // simple block-wide exclusive scan for nElement <= blockDim.x
 template<typename T>
@@ -208,4 +208,4 @@ __global__ void GHistogram_8bits(
     }
 }
 
-} // namespace rsort
+} // namespace rsort::detail

@@ -15,7 +15,7 @@
 #include "tuning.cuh"
 
 
-namespace rsort {
+namespace rsort::detail {
 
 template<
     typename Key_T,
@@ -203,7 +203,7 @@ struct Scatter {
     
 };
 
-} // namespace rsort
+} // namespace rsort::detail
 
 
 /*

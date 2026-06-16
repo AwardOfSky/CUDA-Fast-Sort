@@ -16,7 +16,7 @@
 #endif
 
 
-namespace rsort {
+namespace rsort::detail {
 
 // Staging modes, policy and scatter logic could be in scatter.cuh, but makes more sense
 // to define it here at the base because it also influences kernel geometry and tuning.
@@ -431,4 +431,4 @@ struct histogram_tuning {
     }
 };
 
-} // namespace rsort
+} // namespace rsort::detail

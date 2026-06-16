@@ -26,7 +26,7 @@
 #include <meta>
 
 
-namespace rsort {
+namespace rsort::experimental {
 
 // quick fixed_string implementation
 template<size_t N>
@@ -183,6 +183,6 @@ struct soa_traits {
     }
 };
 
-} // namespace rsort
+} // namespace rsort::experimental
 
 #endif // RSORT_CPP_REFLECTION
