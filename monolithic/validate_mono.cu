@@ -2,7 +2,7 @@
     Run validation for monolithic library
     
     Compile:
-    nvcc -O3 -std=c++17 -arch=sm_86 -I.. -I../benchmark validate_mono.cu ../benchmark/bench_parser.cpp -o validate_mono
+    nvcc -O3 -std=c++17 -arch=sm_86 -I.. -I../benchmark validate_mono.cu ../benchmark/bench_parser.cpp -o validate_mono(.exe)
     
     Run:
     ./validate_mono --validation --iterations 1 --warmup 0
