@@ -511,17 +511,20 @@ using get_unsigned_of = typename radix_traits<T, Is_Long_Double>::unsigned_of;
 template<typename Key_T>
 struct histogram_tuning {
 
-    static constexpr bool KEY_T_MULTIPLIER =
-        (sizeof(Key_T) == 1) ? 1 :
-        (sizeof(Key_T) == 2) ? 1 :
-        (sizeof(Key_T) == 3) ? 0 :
-        (sizeof(Key_T) == 4) ? 0 :
-        0;
+    // old tunings: (5, 6), (4, 8), (6, 4)
+    static constexpr uint32_t GHIST_MULTIPLIER  =
+        (sizeof(Key_T) <= 1) ? 12 :
+        (sizeof(Key_T) <= 2) ? 12 :
+        (sizeof(Key_T) <= 4) ? 6 : // 6, 4
+        (sizeof(Key_T) <= 8) ? 3 : // 3, 6
+        2; // 2, 6
+    static constexpr uint32_t BLOCK_MULTIPLIER  =
+        (sizeof(Key_T) <= 1) ? 4 :
+        (sizeof(Key_T) <= 2) ? 4 :
+        (sizeof(Key_T) <= 4) ? 4 :
+        (sizeof(Key_T) <= 8) ? 6 :
+        6;
 
-    // tunings: (5, 6), (4, 8), (6, 4)
-    static constexpr uint32_t GHIST_MULTIPLIER          = 6 * KEY_T_MULTIPLIER;
-    static constexpr uint32_t BLOCK_MULTIPLIER          = 4;
-    
     static constexpr uint32_t GHIST_THREADS             = 256;
     static constexpr uint32_t GHIST_ITEM_PER_BLOCK      = GHIST_THREADS * GHIST_MULTIPLIER;
     static constexpr uint32_t GHIST_ITEMS_PER_THREAD    = GHIST_ITEM_PER_BLOCK / GHIST_THREADS;

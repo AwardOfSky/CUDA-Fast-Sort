@@ -333,7 +333,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 - Full validation was run on Ubuntu 24.04 LTS and Windows 11.
 - Due to heavy template instantiation, validation is disabled by default, as it can take over 2 minutes, even on modern CPUs. The toggle is the single "VALIDATION_TEST" macro at the start of the main file. However, normal "one type, one scenario" compilation shouldn't take more than a few seconds at most.
-- You can use the macros at the start of [validate_sort.cuh](validate_sort.cuh) to change the set of data types to check validation for. Some other standard subsets are provided, or you can define your own.
+- You can use the macros at the start of [rsort.cuh](include/rsort/rsort.cuh) to change the set of data types to check validation for. Some other standard subsets are provided, or you can define your own.
 
 ## Failed Experiments
 
