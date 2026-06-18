@@ -1,4 +1,4 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 cub_radix_double.cu bench_parser.cpp -o cub_d(.exe)
+// nvcc -O3 -std=c++17 -arch=sm_86 -I../include cub_radix_double.cu bench_parser.cpp -o cub_radix_double(.exe)
 // - lineinfo optional
 
 #include <cuda_runtime.h>
@@ -204,7 +204,7 @@ int benchmark_cub_double(
             "Pairs\t=\t%.*s\n",
 
             prop.name,
-            "CUB DoubleBuffer",
+            "CUB (DoubleBuffer)",
             (long long unsigned int)n,
             (int)sv_temp.size(), sv_temp.data(),
             (double)temp_bytes / (1024. * 1024.),

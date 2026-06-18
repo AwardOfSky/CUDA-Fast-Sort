@@ -1,4 +1,4 @@
-// nvcc -O3 -std=c++17 -arch=sm_86 cubradix.cu bench_parser.cpp -o cub_radix(.exe)
+// nvcc -O3 -std=c++17 -arch=sm_86 -I../include cub_radix.cu bench_parser.cpp -o cub_radix(.exe)
 // - lineinfo optional
 
 #include <cuda_runtime.h>
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     }
 
     // Benchmark example
-    bool ret = benchmark_cub<(bool)rd::Order::ascending, uint32_t, size_t>(
+    bool ret = benchmark_cub<(bool)rd::Order::ascending, uint64_t, size_t>(
         conf.n,
         conf.iterations,
         conf.warmups,

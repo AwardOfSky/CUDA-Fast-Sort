@@ -41,11 +41,11 @@ __device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_el
 
 
 // Block exclusive scan specialized for 256 threads (8 warps).
+template<uint32_t SCAN256_WARPS>
 __device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
     uint32_t x,
-    uint32_t* warp_sums) {
-    
-    constexpr uint32_t SCAN256_WARPS = histogram_tuning::SCAN256_WARPS;
+    uint32_t* warp_sums
+) {
 
     int tid = (int)threadIdx.x;
     int warp = tid / WARP_SIZE;
@@ -98,7 +98,9 @@ __global__ void GHistogram_8bits(
     Len_T n,
     Lookback_T* __restrict__ gp_sum_buffer, // [RADIX_PASSES][RADIX_BIN_SIZE]
     uint32_t start_bits,
-    uint32_t* __restrict__ counter) {
+    uint32_t* __restrict__ counter
+) {
+
 
     using RT = radix_tuning<Key_T>;
     using RTraits = radix_traits<Key_T, Is_Long_Double>;
@@ -106,7 +108,7 @@ __global__ void GHistogram_8bits(
     constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
     constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
 
-    using H = histogram_tuning;
+    using H = histogram_tuning<Key_T>;
     constexpr uint32_t GHIST_ITEMS_PER_THREAD = H::GHIST_ITEMS_PER_THREAD;
     constexpr uint32_t GHIST_ITEM_PER_BLOCK = H::GHIST_ITEM_PER_BLOCK;
     constexpr uint32_t SCAN256_WARPS = H::SCAN256_WARPS;
@@ -184,7 +186,7 @@ __global__ void GHistogram_8bits(
     for (int p = 0; p < RADIX_PASSES; ++p) {
         if constexpr (EXCLUSIVE_SCAN_256) {
             uint32_t x = local_counters[p][threadIdx.x];
-            uint32_t excl = block_exclusive_scan_256(x, scan_warp_sums);
+            uint32_t excl = block_exclusive_scan_256<SCAN256_WARPS>(x, scan_warp_sums);
             local_counters[p][threadIdx.x] = excl;
             __syncthreads();
         } else {

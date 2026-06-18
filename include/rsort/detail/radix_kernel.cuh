@@ -363,7 +363,7 @@ static void onesweep_byte_sort_enqueue(
     constexpr uint32_t REORDER_THREADS = RT::REORDER_THREADS;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
 
-    using H = histogram_tuning;
+    using H = histogram_tuning<Key_T>;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
 
     

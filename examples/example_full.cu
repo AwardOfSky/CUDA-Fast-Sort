@@ -16,7 +16,7 @@
 // Test different configurations and APIs
 #define DESCENDING  0
 #define KV_PAIRS    0
-using Key_T         = long double; // type of key
+using Key_T         = uint32_t; // type of key
 using Val_T         = uint32_t; // type of val
 using Len_T         = size_t;   // type of n
 

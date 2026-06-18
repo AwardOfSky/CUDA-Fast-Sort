@@ -6,7 +6,7 @@
     Validation is template HEAVY! Only enable if you want to run validation.
 
     Compile:
-        nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o radix_gpu(.exe)
+        nvcc -O3 -std=c++17 -arch=sm_86 -I../include radix_gpu.cu bench_parser.cpp -o rsort(.exe)
     Example: 
         ./radix_gpu --n 10000000 --iterations 30
     Validation:
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
 
     // Benchmark example
     if (!conf.validation) {
-        bool ret = rsort::benchmark<rsort::Order::ascending, uint32_t, size_t>(
+        bool ret = rsort::benchmark<rsort::Order::ascending, uint64_t, size_t, uint64_t>(
             conf.n,
             conf.iterations,
             conf.warmups,

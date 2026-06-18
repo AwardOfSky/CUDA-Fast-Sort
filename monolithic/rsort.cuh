@@ -507,11 +507,19 @@ struct radix_traits : native_128bit_support {
 template<typename T, bool Is_Long_Double = false>
 using get_unsigned_of = typename radix_traits<T, Is_Long_Double>::unsigned_of;
 
- 
+
+template<typename Key_T>
 struct histogram_tuning {
 
+    static constexpr bool KEY_T_MULTIPLIER =
+        (sizeof(Key_T) == 1) ? 1 :
+        (sizeof(Key_T) == 2) ? 1 :
+        (sizeof(Key_T) == 3) ? 0 :
+        (sizeof(Key_T) == 4) ? 0 :
+        0;
+
     // tunings: (5, 6), (4, 8), (6, 4)
-    static constexpr uint32_t GHIST_MULTIPLIER          = 6;
+    static constexpr uint32_t GHIST_MULTIPLIER          = 6 * KEY_T_MULTIPLIER;
     static constexpr uint32_t BLOCK_MULTIPLIER          = 4;
     
     static constexpr uint32_t GHIST_THREADS             = 256;
@@ -1015,12 +1023,12 @@ __device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_el
 
 
 // Block exclusive scan specialized for 256 threads (8 warps).
+template<uint32_t SCAN256_WARPS>
 __device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
     uint32_t x,
-    uint32_t* warp_sums) {
+    uint32_t* warp_sums
+) {
     
-    constexpr uint32_t SCAN256_WARPS = histogram_tuning::SCAN256_WARPS;
-
     int tid = (int)threadIdx.x;
     int warp = tid / WARP_SIZE;
     int lane = lane_id_i32();
@@ -1080,7 +1088,7 @@ __global__ void GHistogram_8bits(
     constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
     constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
 
-    using H = histogram_tuning;
+    using H = histogram_tuning<Key_T>;
     constexpr uint32_t GHIST_ITEMS_PER_THREAD = H::GHIST_ITEMS_PER_THREAD;
     constexpr uint32_t GHIST_ITEM_PER_BLOCK = H::GHIST_ITEM_PER_BLOCK;
     constexpr uint32_t SCAN256_WARPS = H::SCAN256_WARPS;
@@ -1158,7 +1166,7 @@ __global__ void GHistogram_8bits(
     for (int p = 0; p < RADIX_PASSES; ++p) {
         if constexpr (EXCLUSIVE_SCAN_256) {
             uint32_t x = local_counters[p][threadIdx.x];
-            uint32_t excl = block_exclusive_scan_256(x, scan_warp_sums);
+            uint32_t excl = block_exclusive_scan_256<SCAN256_WARPS>(x, scan_warp_sums);
             local_counters[p][threadIdx.x] = excl;
             __syncthreads();
         } else {
@@ -1562,7 +1570,7 @@ struct Radix_Ranker {
     static constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
     static constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     static constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
-    static constexpr uint32_t SCAN256_WARPS = histogram_tuning::SCAN256_WARPS;
+    static constexpr uint32_t SCAN256_WARPS = histogram_tuning<Key_T>::SCAN256_WARPS;
 
 
     struct Temp_Storage {
@@ -1642,7 +1650,7 @@ struct Radix_Ranker {
         }
 
         // Block scan over per-bin counts
-        exclusive_digit_prefix = (int)block_exclusive_scan_256(
+        exclusive_digit_prefix = (int)block_exclusive_scan_256<SCAN256_WARPS>(
             bin_owner ? (uint32_t)bins : 0u,
             temp_storage.scan_warp_sums
         );
@@ -2261,7 +2269,7 @@ static void onesweep_byte_sort_enqueue(
     constexpr uint32_t REORDER_THREADS = RT::REORDER_THREADS;
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
 
-    using H = histogram_tuning;
+    using H = histogram_tuning<Key_T>;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
 
     

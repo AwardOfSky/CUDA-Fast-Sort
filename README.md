@@ -22,17 +22,15 @@ The implementation is based on CUB's DeviceRadixSort. It is stable, using a 8-bi
 - "semi"-arbitrary array sizes <sup>2</sup>
 - Ascend/descend
 - Key-value pair sorting
-- Support for 128-bit keys <sup>3</sup>
+- Support for 128-bit keys (Including **long doubles**)
 
 <sup>1</sup> Support for all standard C++ types, including 64-bit and 128-bit **long doubles** (according to compiler defined size). 
-80-bit precison **long double** representations are supported as long as the **sizeof()** reported by the compiler is 8 bytes (128-bit).
+Support is independent of floating point accuracy, meaning 80-bit precison **long double** representations are supported as long as the **sizeof()** reported by the compiler is 8 bytes (128-bit).
 
 Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
 This is the same idea CUB uses. Support for descending sorting is achieved using the same principle: by simply inverting the bit representation during reordering.
 
-<sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurt performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even with 32 bits counters.
-
-<sup>3</sup> Including **long doubles**.
+<sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurts performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even with 32 bits counters.
 
 
 ### Assumptions and missing features (different from CUB):
@@ -46,7 +44,7 @@ From a **proof-of-concept** perspective, some features were intentionally left o
 <sup>1</sup> Key-value support would follow a SoA approach, preserving the current key-array layout. Conceptually, this extends the scatter stage so that key moves are mirrored over the corresponding values. While this feature should be required for a production-ready sort, it is mostly independent from the optimizations already performed, so it's left for future work.
 -->
 
-<sup>1</sup> This was mainly done to test larger arrays. CUB provides two interfaces, one which preserves the input and writes to a separate output buffer, and another thadouble-buffering and drops the input remaining intact requirement. This implementation uses a standard two-buffer ping-pong scheme (equivalent to CUB double-buffering), simplifying the pipeline and avoiding additional buffer management at the performance cost of potentially overwriting the input in case the number of passes performance is odd.
+<sup>1</sup> This was mainly done to test larger arrays. CUB provides two interfaces, one which preserves the input and writes to a separate output buffer, and another employing double-buffering that drops the input remaining intact requirement. This implementation uses a standard two-buffer ping-pong scheme (equivalent to CUB double-buffering), simplifying the pipeline and avoiding additional buffer management at the performance cost of potentially overwriting the input in case the number of passes performance is odd, which is arguably, very rare/specific. This also has the benefit of taking the burden from the user to deal with double buffering machinery (the cases where only an odd number of bytes are sorted are rare).
 
 
 ## Optimizations:
@@ -54,7 +52,7 @@ From a **proof-of-concept** perspective, some features were intentionally left o
 ### Lookback epoch bits
 
 
-As far as improving performance is concerned, this optimization does a lot of the heavy lifting because it removes a full lookback buffer clear on most passes and for most scenarios.
+As far as improving performance is concerned, this optimization does a lot of the heavy lifting as it removes a full lookback buffer clear on most passes and for most scenarios.
 
 The idea is to tag lookback entries with epoch/pass bits so the same lookback buffer can be reused across passes without having to be cleared every time. cudaMemset is cheap, but clearing, sometimes MBs of data every pass, quickly adds up, and the clear must complete before we do any more sorting work.
 The lookback path is a great place to pay this extra bookkeeping cost as it is already latency-tolerant: each entry may have to wait for previous blocks to publish, which has the potential to amortize some bit logic.
@@ -109,21 +107,21 @@ It is worth noting that this optimization is experimental and is not enabled by 
 
 Honestly, I don't know.
 
-Micro-optimizations are a tricky topic in the era of modern compilers, and I'm no voodoo ~~wizard~~ child. Still, the goal of this project was to learn the underlying concepts, so almost all of the code was written from scratch rather than copied.
-Because of that, each component ended up being tailored specifically for this sort. Many of the smaller changes were checked by diffing SASS dumps, which helped keep the hot path lean, even if it doesn’t exactly match what CUB or other sources do.
+Micro-optimizations are a tricky topic in the era of modern compilers, and I'm no voodoo ~~wizard~~ child. Still, the goal of this project was to learn the underlying concepts, so practically all of the code was written from scratch, not copied.
+For this reason, each component ended up being tailored specifically for this sort. Many of the smaller changes were checked by diffing SASS dumps, which helped keep the hot path lean, even if it doesn’t exactly match what CUB or other sources do.
 
 Some noteworthy micro-optimizations:
 
 - **n forced to size_t** - Even though the entire kernel was written and validated to accept array sizes in any integer data type,  at some point I realized the algorithm was ever so consistently faster if _n_ was always _size_t_. I assume it has to do with casting choices improving codegen (_e.g._, fewer implicit conversions and better register usage), but I did not investigate this further as the SASS diff proved too extensive and terse.
 
-- **__sync primitives** - Not every ```__syncwarp()``` or ```__syncthreads()``` written is needed. However, they often help with performance. In fact, in testing, I found that different combinations of sync primitives along a given kernel, even if not strictly required for correctness, can sometimes yield better performance gains, mainly due to subtle changes in warp scheduling and thread-pacing (the main reorder kernel is a good example).
+- **__sync primitives** - Not every ```__syncwarp()``` or ```__syncthreads()``` written is needed. However, they often help with performance. In fact, in testing, I found that different combinations of sync primitives along a given kernel, even if not strictly required for correctness, can sometimes yield better performance gains, mainly due to subtle changes in warp scheduling and thread-pacing (the main reorder kernel in [radix_kernel.cuh](include/rsort/detail/radix_kernel.cuh) is a good example).
 
 - **PTX instructions** - In some areas, it is worth getting your hands dirty and writing some raw assembly. As a matter of fact, in the case of ```__match_any_sync()``` this is more a performance requirement rather than a micro-optimization, as the radix label is only 8 bits (in our case), so there is no need to match on a whole 32-bit register, and this falls right in the ballot-counting hot path of the ranker. Other small lane helpers also use PTX, though mostly to avoid including extra CUB libraries (also helps reduce compilation times).
 
 
 ## API Interface
 
-The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and acsending/descending sorting:
+The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and acsending/descending sorting. These are defined in the main [rsort.cuh](include/rsort/rsort.cuh) header.
 
 
 - **sort** - Sort an array of keys only in ascending order.
@@ -146,18 +144,19 @@ The API exposes 4 main entry points for combinations of standard/KV-pair sorting
 
 ## Compilation and Usage 
 
-#### Compile with:
+#### Both benchmarks and examples can be compiled with:
 
 ```bash
 make
 ```
 
-Or manually:
+#### Or manually:
 
 ```bash
-nvcc -O3 -std=c++17 -arch=sm_86 radix_gpu.cu bench_parser.cpp -o rsort(.exe)
+nvcc -O3 -std=c++17 -arch=sm_86 -I../include radix_gpu.cu bench_parser.cpp -o rsort(.exe)
 ```
 
+(This is the benchmark example, for other examples check the beginning of the file for the specific command)
 
 #### Run:
 ```bash
@@ -197,31 +196,31 @@ Configuration used for all  experiments:
 	- **CUDA**
 		- **Version** - V13.1.115
     	- **Build** - cuda_13.1.r13.1/compiler.37061995_0
-	- **Driver** - 580.126.09
+	- **Driver** - 580.159.04
 	- **OS** - Ubuntu 24.04.4 LTS x86_64
-	- **Kernel** - 6.17.0-29-generic
+	- **Kernel** - 6.17.0-35-generic
 - **Compilation:**
 	- **nvcc flags** - -O3 -arch=sm_86 <sup>2</sup>
 
-<sup>1</sup> No background processes running; headless (no displays attached).
+<sup>1</sup> No GPU background processes running; headless (no displays attached).
 
-<sup>2</sup> As most of the code executed at runtime ends up being device-specific, compiled with NVCC, -O3 does not do much. In testing, as a curiosity, setting -O0 and -O3 were shown to yield very similar timings.
+<sup>2</sup> As most of the code executed at runtime ends up being device-specific, compiled with NVCC, -O3 does not do much. In testing, as a curiosity, setting -O0 and -O3 were shown to yield similar timings.
 
 
 ### Data collection
 
 Unless expressed otherwise, all collected data points represent an average of 30 runs, with a warmup of at least 250 ms (or 10 runs, whichever takes longer). This will be referred to as the _steady-state_ configuration.
-The warmup metric was chosen with the goal of tightening the standard deviation between runs as much as possible, not to bias any of the approaches.
+This warmup metric was chosen with the goal of tightening the standard deviation between runs as much as possible, not to bias any of the approaches.
 In addition, all experiments correspond to sorting unsigned keys in ascending order, randomly initialized with a standard avalanche bit mixer (check _init_keys_ kernel in [utils.cuh](radix/utils.cuh)).  All graphs show throughput instead of timings in number of elements sorted per second - _el/s_). This project's implementation is referred to as _rsort_.
 
 ### Scaling Behavior
 
-For 32-bit keys, rsort is faster across all tested array sizes, from 2<sup>20</sup> to 2<sup>29</sup> elements. Speedups are more pronounced for smaller arrays, starting in the double digits and eventually stabilizing around 3% as peak throughput is reached. Peak throughput for rsort is reached around 22.4B el/s for 2<sup>27</sup> elements. CUB peaks slightly lower, at around 21.9B el/s reached at 2<sup>28</sup> elements.
+For 32-bit keys, rsort is faster across all tested array sizes, from 2<sup>20</sup> to 2<sup>29</sup> elements. Speedups are more pronounced for smaller arrays, starting in the double digits and eventually stabilizing around 3.5% as peak throughput is reached. Peak throughput for rsort is reached around 22.5B el/s for 2<sup>27</sup> elements. CUB peaks slightly lower, at around 21.9B el/s reached at 2<sup>28</sup> elements.
 It's interesting to note the drop in throughput from 2<sup>28</sup> elements onwards for rsort, as it coincides with the policy change that disables epoch bits in the lookback path. Surprisingly, rsort still leads by around 2% with epoch bits turned off.  For 32 bits, rsort uses 21 items per thread and 384 threads per block, which, as far as I can tell, is the same CTA geometry CUB uses for this scenario in sm_86. Rsort pipeline being optimized for an 8-bit radix onesweep makes a strong case against CUB's more general policies, at least for high-throughput scenarios. Lookback epoch bits seem to provide the largest relative advantage for smaller arrays.
 
 <p align="center">
-  <img src="graphs/scaling_uint32_t.png" width="49%" />
-  <img src="graphs/scaling_uint64_t.png" width="49%" />
+  <img src="data/graphs/scaling_uint32_t.png" width="49%" />
+  <img src="data/graphs/scaling_uint64_t.png" width="49%" />
 </p>
 
 For 64-bit keys, the story changes slightly. CUB starts behind by a more modest margin for smaller arrays (mainly sizes 2<sup>21</sup> and 2<sup>22</sup>), but the margin widens in favor of rsort for larger arrays. rsort uses 448 threads per block and 6 items per thread to sort 64-bit keys; changing the policy to match CUB's geometry seems to yield very similar results. Changing other knobs in Rsort's reorder and lookback policy does not seem to move performance significantly either. Eventually, rsort reaches a 5.4% performance gain with a peak throughput of around 6B el/s, before falling to a 4.5% gain when turning off the lookback epoch policy, at an array size of 2<sup>28</sup>. CUB's throughput peaks at around 5.69B el/s.
@@ -229,8 +228,8 @@ For 64-bit keys, the story changes slightly. CUB starts behind by a more modest 
 Overall, standard deviations seem to be tighter for rsort across most sizes, although for 64-bit keys, CUB seems to present less jitter on average (check [benchmark_data](graphs/benchmark_data.py)). Worth noting that, in my testing, even using an average of 30 runs along with a hefty warmup configuration, standard deviation still varies significantly from run to run, so it is better to focus on the global picture and not read too much into specific values.
 
 <p align="center">
-  <img src="graphs/scaling_uint8_t.png" width="49%" />
-  <img src="graphs/scaling_uint16_t.png" width="49%" />
+  <img src="data/graphs/scaling_uint8_t.png" width="49%" />
+  <img src="data/graphs/scaling_uint16_t.png" width="49%" />
 </p>
 
 For 8 and 16 bits, rsort wins more clearly all around. The CTA geometry used by rsort for both cases is the same as for 32 bits. As far as I could tell, CUB does not use onesweep for keys smaller than 32 bits on sm_86, and the radix is also smaller than 8 bits. I'm not sure of the reasons behind this choice. Perhaps memory management, although looking at memory consumption, the two algorithms do not seem significantly different. Still, this means these two graphs are not comparing implementations of the same algorithm at all anymore.
@@ -250,7 +249,7 @@ Indirect staging adds extra work, so it usually has a performance cost. However,
 In practice, keys are almost always staged directly. Values are staged directly by default, and only staged indirectly when the combined size of the key and value is large enough that direct staging becomes too expensive.
 
 <p align="center">
-  <img src="graphs/kv_pairs_uint32_n27.png" width="65%" />
+  <img src="data/graphs/kv_pairs_uint32_n27.png" width="65%" />
 </p>
 
 The graph shows the results of sorting a combination of 32 and 64-bit keys and values, in rsort and CUB, for an array size of 2<sup>27</sup>.
@@ -265,7 +264,7 @@ The largest improvement is observed when sorting 64-bit keys paired with 64-bit 
 These benchmarks were carried out in _steady-state_ with significant warmup. This means the code caches and paths are pre-loaded and hot. Even though this is typically how most performance benchmarks are performed (especially for GPUs), there is value in testing algorithmic performance on more realistic conditions. A user calling a sort algorithm is most likely to do some other work after with the sorted output, possibly even outside the GPU. The above bar graph shows the results of running both states, again for an unsigned 32-bit array of size 2<sup>27</sup>. The _cold-state_ consists of 1 single run with no warmup of any kind. Results still correspond to an average of 30 runs performed individually and spaced out in time sufficiently to cool the GPU.
 
 <p align="center">
-  <img src="graphs/cold_vs_steady_uint32_n27.png" width="65%" />
+  <img src="data/graphs/cold_vs_steady_uint32_n27.png" width="65%" />
 </p>
 
 In this experiment, CUB achieves a throughput of 21.7B el/s on _steady-state_ vs. 21.5B el/ for  _cold-state_, corresponding to a performance drop of around 1%. In turn, rsort manages 22.4B el/s for _steady-state_ vs 22.2B el/s on _cold-state_, which translates to a 0.9% drop. This corresponds to an advantage of around 3.2% for rsort in _steady-state_ and 3.3% in _cold-state_. 
@@ -277,7 +276,7 @@ Standard deviations are just slightly tighter for rsort in both states. However,
 For this experiment, we are again using _steady-state_ with 32-bit arrays of 2<sup>27</sup> elements. Here, instead of randomly initializing the entire value, only every other byte is randomly initialized, the remaining ones being filled with the same patterns for all keys. This scenario is beneficial for rsort's early-exiting approach, as 2 of the bytes will be marked for skipping. However, CUB's CTA-level short-circuiting should also fast-forward the work of every block that handles the constant-valued bytes to the scatter stage for copying. The idea is to make both mechanisms trigger half of the time in order to compare speedups. Besides, many real-world applications tag bit information in a specific location or bytes of the data (_i.e._ the lookback mechanism of both these algorithms, for instance), making this scenario not so far-fetched.
 
 <p align="center">
-  <img src="graphs/byte_skip_uint32_n27.png" width="65%" />
+  <img src="data/graphs/byte_skip_uint32_n27.png" width="65%" />
 </p>
 
 Results show a throughput increase from 21.7B to 22.1B el/s (+1.6%) for CUB when switching from random to byte-skipped arrays. This was somewhat surprising to profile, as I assumed the work skipped would be much closer to 50%. Still, not performing any GPU work for 2 of the 4 bytes should have rsort decrease timings to about half, giving it an advantage. Indeed, results show that rsort's throughput jumps to about 40.4B el/s when sorting byte-skipped arrays in this scenario.
@@ -295,7 +294,7 @@ For array sizes of 2<sup>26</sup> elements, rsort achieves a throughput of aroun
 For N = 2<sup>27</sup>, rsort's throughput remains roughly the same, while CUB's decreases slightly to 1.45B el/s, translating to a speedup of 2.3%.
 
 <p align="center">
-  <img src="graphs/benchmark_128bit.png" width="65%" />
+  <img src="data/graphs/benchmark_128bit.png" width="65%" />
 </p>
 
 <!--

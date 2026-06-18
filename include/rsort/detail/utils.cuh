@@ -438,9 +438,14 @@ int set_seed_radix(int index) {
 
 
 // ---- other helpers ----
-template<typename T, bool ddof = false>
-double stdev(const T* arr, double avg, size_t n) {
-    if (n == 0) {
+template<typename T>
+double stdev(const T* arr, double avg, size_t n, uint32_t ddof = 0) {
+    static_assert(
+        std::is_arithmetic_v<T>,
+        "[stdev]: Array type must be arithmetic."
+    );
+
+    if ((arr == nullptr) || (n <= ddof)) {
         return 0.0;
     }
 
@@ -450,11 +455,7 @@ double stdev(const T* arr, double avg, size_t n) {
         acc += temp * temp;
     }
 
-    if constexpr (ddof) {
-        return (n > 1) ? std::sqrt(acc / (double)(n - 1)) : 0.0;
-    } else {
-        return std::sqrt(acc / (double)n);
-    }
+    return std::sqrt(acc / double(n - ddof));
 }
 
 

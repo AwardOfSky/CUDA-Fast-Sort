@@ -87,7 +87,7 @@ static bool verify_digit_histograms(
     constexpr uint32_t RADIX_PASSES = RT::RADIX_PASSES;
     constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     constexpr size_t HIST_ELEMS = (size_t)RADIX_PASSES * RADIX_BIN_SIZE;
-    using H = histogram_tuning;
+    using H = histogram_tuning<Key_T>;
     constexpr uint32_t GHIST_THREADS = H::GHIST_THREADS;
     uint32_t hist_blocks = H::HIST_BLOCKS;
     

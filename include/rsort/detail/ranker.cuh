@@ -50,7 +50,7 @@ struct Radix_Ranker {
     static constexpr uint32_t ITEMS_PER_THREAD = RT::REORDER_ITEMS_PER_THREAD;
     static constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
     static constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
-    static constexpr uint32_t SCAN256_WARPS = histogram_tuning::SCAN256_WARPS;
+    static constexpr uint32_t SCAN256_WARPS = histogram_tuning<Key_T>::SCAN256_WARPS;
 
 
     struct Temp_Storage {
@@ -130,7 +130,7 @@ struct Radix_Ranker {
         }
 
         // Block scan over per-bin counts
-        exclusive_digit_prefix = (int)block_exclusive_scan_256(
+        exclusive_digit_prefix = (int)block_exclusive_scan_256<SCAN256_WARPS>(
             bin_owner ? (uint32_t)bins : 0u,
             temp_storage.scan_warp_sums
         );
