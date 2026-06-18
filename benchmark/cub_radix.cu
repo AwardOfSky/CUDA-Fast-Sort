@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     }
 
     // Benchmark example
-    bool ret = benchmark_cub<(bool)rd::Order::ascending, uint64_t, size_t>(
+    bool ret = benchmark_cub<(bool)rd::Order::ascending, uint32_t, size_t>(
         conf.n,
         conf.iterations,
         conf.warmups,
@@ -99,7 +99,7 @@ int benchmark_cub(
     // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
     CHECK_CUDA(cudaMalloc(&d_out, sizeof(T) * n));
-    size_t vals_bytes = 0;
+    [[maybe_unused]] size_t vals_bytes = 0;
     if constexpr (SORTING_PAIRS) {
         // align values up n bytes 
         vals_bytes = rd::align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n);

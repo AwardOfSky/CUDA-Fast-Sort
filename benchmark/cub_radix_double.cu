@@ -113,7 +113,7 @@ int benchmark_cub_double(
     // do not time memory allocations
     CHECK_CUDA(cudaMalloc(&d_keys, sizeof(T) * n));
     CHECK_CUDA(cudaMalloc(&d_keys_alt, sizeof(T) * n));
-    size_t vals_bytes = 0;
+    [[maybe_unused]] size_t vals_bytes = 0;
     if constexpr (SORTING_PAIRS) {
         // align values up n bytes
         vals_bytes = rd::align_up_power<sizeof(uint32_t)>(sizeof(Value_T) * n);
