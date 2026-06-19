@@ -1,4 +1,4 @@
-# rsort - A fast Radix Sort in CUDA
+# **rsort** - A fast radix sort in CUDA
 
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 ![GPU](https://img.shields.io/badge/GPU-NVIDIA-green)
@@ -8,17 +8,36 @@
 ![Status](https://img.shields.io/badge/status-Maintained-brightgreen)
 ![Release](https://img.shields.io/badge/release-v0.4.0-orange)
 
-A CUDA implementation of LSD radix sort based on [NVIDIA CUB's](https://github.com/NVIDIA/cccl/tree/main/cub) onesweep.
+**rsort** is an experimental CUDA radix sort library based on [NVIDIA CUB's](https://github.com/NVIDIA/cccl/tree/main/cub) onesweep design. It implements key-only and key-value sorting for multiple key widths, including 128-bit keys, long double support, etc, and provides validation and benchmarking against CUB.
 
 Initially motivated by the GPUOpen article on [boosting GPU radix sort performance](https://gpuopen.com/learn/boosting_gpu_radix_sort/), this project started as a small educational endeavour to get familiar with CUDA and delve deeper into C++.
 
 The original goal was simply to build a radix sort for the GPU from scratch, without relying on third-party kernels.
-However, with time, it has  grown into a platform for exploring additional optimizations and tunings.
-
-As it stands, rsort is an experimental library, and a testbed for optimizations such as lookback epoch bits and early-exiting, without loss of generality.
-
+However, with time, it has grown into a platform for exploring additional optimizations and tunings.
+As it stands, rsort is an experimental library and a testbed for optimizations such as lookback epoch bits and early-exiting.
 
 Validation tests and benchmarks are included to corroborate correctness and performance against CUB, but the primary focus of the project remains on expressing the algorithms and optimizations implemented, as well as their trade-offs.
+
+
+## Quick Start
+
+Copy `include` directory into your project (check `monolithic` for single header). Quick and dirty example:
+
+```cpp
+#include <rsort/rsort.cuh>
+...
+
+size_t temp_bytes = 0;
+uint8_t* d_workspace = nullptr;
+
+rsort::sort(d_keys, &temp_bytes, nullptr, n); // get size
+cudaMalloc(&d_workspace, temp_bytes);
+
+rsort::sort(d_keys, &temp_bytes, d_workspace, n); // sort
+```
+
+Check `examples` and `benchmark` folders for more.
+
 
 ## Table of Contents
 
@@ -58,7 +77,7 @@ The implementation is based on CUB's DeviceRadixSort. It is stable, using a 8-bi
 - Support for 128-bit keys (Including **long doubles**)
 
 <sup>1</sup> Support for all standard C++ types, including 64-bit and 128-bit **long doubles** (according to compiler defined size). 
-Support is independent of floating point accuracy, meaning 80-bit precison **long double** representations are supported as long as the **sizeof()** reported by the compiler is 8 bytes (128-bit).
+Support is independent of floating point accuracy, meaning 80-bit precision **long double** representations are supported as long as the **sizeof()** reported by the compiler is 8 bytes (128-bit).
 
 Support for unsigned types is done through the twiddling in and out of unsigned types of the same size.
 This is the same idea CUB uses. Support for descending sorting is achieved using the same principle: by simply inverting the bit representation during reordering.
@@ -154,25 +173,25 @@ Some noteworthy micro-optimizations:
 
 ## API Interface
 
-The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and acsending/descending sorting. These are defined in the main [rsort.cuh](include/rsort/rsort.cuh) header.
+The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and ascending/descending sorting. These are defined in the main [rsort.cuh](include/rsort/rsort.cuh) header.
 
 
-- **sort** - Sort an array of keys only in ascending order.
+- **sort** - Sorts an array of keys only in ascending order.
 
-- **sort_descending** - Sort an array of keys only in descending order.
+- **sort_descending** - Sorts an array of keys only in descending order.
 
-- **sort_pairs** - Sort an arrays of keys, along with a second array of corresponding values, in ascending order.
+- **sort_pairs** - Sorts an array of keys, along with a second array of corresponding values, in ascending order.
 
-- **sort_pairs_descending** - Sort an arrays of keys, along with a second array of corresponding values, in descending order.
+- **sort_pairs_descending** - Sorts an array of keys, along with a second array of corresponding values, in descending order.
 
 
 #### Arguments (in order):
   - `d_inout <Key_T*>` - Input array of `n` elements of type `Key_T` (check validation types). Sorted output is written here. 
   - `d_inout_values <Value_T*>` - [Only for the KV-pair sorting interfaces]. Input array of `n` elements of type `Value_T`. There are no restrictions for the size or type of `Value_T`.
   - `temp_bytes <size_t*>` - If null, a call to any of the interfaces will solely calculate the size in bytes of the workspace buffer needed to perform sorting and return. Otherwise, performs the sort.
-  - `d_workspace <uint8_t*>` - Helper memory region compromised of an extra ping-pong buffer for sorting out-of-place, a lookback buffer, histogram counters, as well as any other data needed for sorting.
+  - `d_workspace <uint8_t*>` - Helper memory region composed of an extra ping-pong buffer for sorting out-of-place, a lookback buffer, histogram counters, as well as any other data needed for sorting.
   - `n <Len_T>` - Size of input array in number of elements. `Len_T` should be an integral type.
-  - `capture_stream <cudaStream_t>` - [Optional: Deafult = `nullptr`] If not null, a CUDA graph will be created for the kernel operation of the algorithm, in which case `capture_stream` must be valid.
+  - `capture_stream <cudaStream_t>` - [Optional: Default = `nullptr`] If not null, a CUDA graph will be created for the kernel operation of the algorithm, in which case `capture_stream` must be valid.
 
 
 ## Compilation and Usage 
@@ -352,9 +371,9 @@ Standard deviations for CUB seem to hint towards less jitter than rsort for this
 
 To ensure the correctness of the implementation, a validation suite is provided to test sorting across a range of different scenarios. A full validation run consists of sorting arrays of all data types, for every array mode (random, byte-skipped initialization and ascending order) and sort orders (ascending and descending). Array sizes span from the largest power of 2 that fits the GPU VRAM (including workspace memory), down through 11 successive halvings. There are also tests for smaller arrays with as little as 10 elements.
 
-The full validation includes the follwing data types: ```uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double``` for every plataform, with the addition of ```long double, __int128 and unsigned __int128``` for GCC/Clang, totalling 6552 test cases (on Linux).
+The full validation includes the following data types: ```uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double``` for every platform, with the addition of ```long double, __int128 and unsigned __int128``` for GCC/Clang, totalling 6552 test cases (on Linux).
 
-Each test performs order checks on the sorted elements (manifested value), radix count histogram checks over the whole array, as well as pairing and stability checks (through unisgned/identity values) when sorting Key-Value pairs with indices for value data.
+Each test performs order checks on the sorted elements (manifested value), radix count histogram checks over the whole array, as well as pairing and stability checks (through unsigned/identity values) when sorting Key-Value pairs with indices for value data.
 
 ### Example validation run:
 ```bash
@@ -370,7 +389,7 @@ Performs a validation run, calling a single benchmark with no warmup for all def
 
 ## Failed Experiments
 
- - **Multi-lookback** - Learning about the chained lookback, at first, does not seem like the most efficient structure. Basically, block 0 must publish something, even if partially, before any lookback work is done. I experimented with a multi-group lookback where every group gathers information independently, reducing contention on a single chain and paying a small prefix sum cost at the end. Sounded good... doesn't work. Or at least I didn't manage to reduce performance with it. 
+ - **Multi-lookback** - Learning about the chained lookback, at first, does not seem like the most efficient structure. Basically, block 0 must publish something, even if partially, before any lookback work is done. I experimented with a multi-group lookback where every group gathers information independently, reducing contention on a single chain and paying a small prefix sum cost at the end. Sounded good... doesn't work. Or at least I didn't manage to improve performance with it. 
  
  - **Ranker** - A lot of time was spent trying to optimize the ranker to no avail. I eventually decided to keep my sanity and checked CUB’s approach 😀 This is probably the component that more closely matches it. 
 
@@ -390,11 +409,11 @@ Checklist of standardization efforts for all major vN.N releases from version v0
 ## Notes and Disclaimers
 
 - While extensively tested and benchmarked, rsort has not yet received the level of platform coverage, validation, long-term maintenance and overall battle-tested'ness expected of a production library.
-- For convenience, a monolithic single-header version is provided in [monolithic/rsort.cuh](monolithic/rsort.cuh). The main implementation remains split across files for readability. This monolithic version might not be up to date with development!
+- For convenience, a monolithic single-header version is provided in [monolithic/rsort.cuh](monolithic/rsort.cuh). This header is updated and validated for tagged releases, while development primarily happens in the split-header implementation. Therefore, some features might not be up to date with active development.
 - The implementation was tested on a single GPU (mine). Cross-device results may vary.
 - The optimizations explored here are, to the best of my knowledge, not widely documented in existing GPU radix sort literature, hence this project.
 - Part of the point of this implementation was to prove the optimizations can be carried out without loss of generality and without getting in the way of other features.
-- Performance was mesured with release 1 of this repository. Since then, some optimizations were done, mainly to shared memory reuse and kernel geometry, that might change performance (increase in most cases).
+- Performance was measured with release 1 of this repository. Since then, some optimizations were done, mainly to shared memory reuse and kernel geometry, that might change performance (increase in most cases).
 
 ## TODOs
 
