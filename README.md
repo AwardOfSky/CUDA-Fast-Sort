@@ -1,16 +1,49 @@
-# Fast CUDA Radix Sort
+# rsort - A fast Radix Sort in CUDA
 
+![License](https://img.shields.io/badge/license-MIT-yellow)
+![GPU](https://img.shields.io/badge/GPU-NVIDIA-green)
+![CUDA](https://img.shields.io/badge/CUDA-13.1(tested)-76B900)
+![C++](https://img.shields.io/badge/C%2B%2B-17%2B-blue)
+![Monolithic](https://img.shields.io/badge/Monolithic-included-yellowgreen)
+![Status](https://img.shields.io/badge/status-Maintained-brightgreen)
+![Release](https://img.shields.io/badge/release-v0.4.0-orange)
 
 A CUDA implementation of LSD radix sort based on [NVIDIA CUB's](https://github.com/NVIDIA/cccl/tree/main/cub) onesweep.
 
 Initially motivated by the GPUOpen article on [boosting GPU radix sort performance](https://gpuopen.com/learn/boosting_gpu_radix_sort/), this project started as a small educational endeavour to get familiar with CUDA and delve deeper into C++.
+
 The original goal was simply to build a radix sort for the GPU from scratch, without relying on third-party kernels.
+However, with time, it has  grown into a platform for exploring additional optimizations and tunings.
 
-However, as my understanding of CUDA and parallel programming improved, I began exploring ways to make the implementation more efficient, eventually leading me to CUB’s own implementation as a better reference point.
+As it stands, rsort is an experimental library, and a testbed for optimizations such as lookback epoch bits and early-exiting, without loss of generality.
 
-As it stands, this project serves both as a re-implementation and as a proof of concept for additional optimizations such as lookback epoch bits and early-exiting, without loss of generality.
 
 Validation tests and benchmarks are included to corroborate correctness and performance against CUB, but the primary focus of the project remains on expressing the algorithms and optimizations implemented, as well as their trade-offs.
+
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Optimizations](#optimizations)
+  - [Lookback epoch bits](#lookback-epoch-bits)
+  - [Early-exiting](#early-exiting)
+  - [Micro-Optimizations](#fantastic-gpu-micro-optimizations-and-where-to-find-them)
+- [API Interface](#api-interface)
+- [Compilation and Usage](#compilation-and-usage)
+- [Benchmarks](#benchmarks)
+  - [Setup](#setup)
+  - [Data collection](#data-collection)
+  - [Scaling Behavior](#scaling-behavior)
+  - [Key-Value pairs](#key-value-pairs)
+  - [Cold vs. Steady state](#cold-vs-steady-state)
+  - [128-bit results](#128-bit-results)
+- [Validation](#validation)
+- [Failed Experiments](#failed-experiments)
+- [Releases](#releases)
+- [Notes and Disclaimers](#notes-and-disclaimers)
+- [TODOs](#todos)
+- [Sources](#sources)
+- [Contact](#contact)
+
 
 ## Key Features
 
@@ -33,7 +66,7 @@ This is the same idea CUB uses. Support for descending sorting is achieved using
 <sup>2</sup> Arrays with a number of elements larger than 32 bits are supported. However, in practice, each local histogram counter of each block can only count up to 32 bits. In my testing, making the atomic counter 64-bit hurts performance significantly. Still, it would take trillions of elements with the same exact key for overflow to happen, even with 32 bits counters.
 
 
-### Assumptions and missing features (different from CUB):
+### Assumptions (different from CUB):
 
 From a **proof-of-concept** perspective, some features were intentionally left out:
 
@@ -101,7 +134,7 @@ However, we have already built a histogram for all passes before sorting. The id
 The main drawback of this technique is probabilistic: it is significantly less likely for all radices in the entire array to fall into a single bin than for keys within a single block to do so. This means that, on average, _early-exiting_ triggers less frequently than block-level _short-circuiting_. 
 However, when it does trigger, it skips an entire pass, leading to more substantial speedups (the onesweep kernel is not called, so no GPU work is performed for that pass, aside from the copy to host). In contrast, short-circuiting occurs more often but yields smaller gains per occurrence.
 
-It is worth noting that this optimization is experimental and is not enabled by default (check EXIT_EARLY_OPT in the user knobs of [radix_kernel.cuh](radix_kernel.cuh)). Still, given the low overhead of generating the skip mask (_e.g._, copying and evaluating ~1 KB of histogram data for 32-bit keys assuming an 8-bit radix), I'd argue a fully-fledged GPU radix sort would ideally use both approaches together, since they operate at different levels.
+It is worth noting that this optimization is experimental and is not enabled by default (check EXIT_EARLY_OPT in the user knobs of [radix_kernel.cuh](include/rsort/detail/radix_kernel.cuh)). Still, given the low overhead of generating the skip mask (_e.g._, copying and evaluating ~1 KB of histogram data for 32-bit keys assuming an 8-bit radix), I'd argue a fully-fledged GPU radix sort would ideally use both approaches together, since they operate at different levels.
 
 ### Fantastic GPU micro-optimizations and where to find them
 
@@ -200,7 +233,7 @@ Configuration used for all  experiments:
 	- **OS** - Ubuntu 24.04.4 LTS x86_64
 	- **Kernel** - 6.17.0-35-generic
 - **Compilation:**
-	- **nvcc flags** - -O3 -arch=sm_86 <sup>2</sup>
+	- **nvcc flags** - -std=c++17 -O3 -arch=sm_86 <sup>2</sup>
 
 <sup>1</sup> No GPU background processes running; headless (no displays attached).
 
@@ -211,7 +244,7 @@ Configuration used for all  experiments:
 
 Unless expressed otherwise, all collected data points represent an average of 30 runs, with a warmup of at least 250 ms (or 10 runs, whichever takes longer). This will be referred to as the _steady-state_ configuration.
 This warmup metric was chosen with the goal of tightening the standard deviation between runs as much as possible, not to bias any of the approaches.
-In addition, all experiments correspond to sorting unsigned keys in ascending order, randomly initialized with a standard avalanche bit mixer (check _init_keys_ kernel in [utils.cuh](radix/utils.cuh)).  All graphs show throughput instead of timings in number of elements sorted per second - _el/s_). This project's implementation is referred to as _rsort_.
+In addition, all experiments correspond to sorting unsigned keys in ascending order, randomly initialized with a standard avalanche bit mixer (check _init_keys_ kernel in [utils.cuh](include/rsort/detail/utils.cuh)).  All graphs show throughput instead of timings in number of elements sorted per second - _el/s_). This project's implementation is referred to as _rsort_.
 
 ### Scaling Behavior
 
@@ -292,7 +325,7 @@ I think it is worth noting that the comparison between these mechanisms should n
 
 This scenario consists of a preliminary experiment for sorting 128-bit arrays (again, unsigned keys, _steady-state_). Ultimately, this should be a scaling graph like the first four. However, to avoid cluttering this benchmarking section and sparing my poor GPU of further torture, let's stick with the sizes corresponding to the highest potential for peak throughput that fit in GPU VRAM, without causing any OOM errors.
 For array sizes of 2<sup>26</sup> elements, rsort achieves a throughput of around 1.53B el/s when compared to CUB's 1.46B el/s, representing a speedup of 4.8%.
-For N = 2<sup>27</sup>, rsort's throughput remains roughly the same, while CUB's decreases slightly to 1.45B el/s, translating to a speedup of almost 5%.
+For N = 2<sup>27</sup>, rsort's throughput remains roughly the same, while CUB's decreases slightly to 1.45B el/s, translating to a speedup of 5%.
 
 <p align="center">
   <img src="data/graphs/benchmark_128bit.png" width="65%" />
@@ -386,5 +419,7 @@ Checklist of standardization efforts for all major vN.N releases from version v0
 
 ## Contact
 
-Email: fjrbaeta@gmail.com 
+- Email: fjrbaeta@gmail.com
+- Scholar: [Francisco Baeta](https://scholar.google.com/citations?user=2Tnl5ZYAAAAJ&hl=pt-PT&oi=ao)
+- Linkedin [profile](https://www.linkedin.com/in/francisco-rodrigues-92ab81285/)
 

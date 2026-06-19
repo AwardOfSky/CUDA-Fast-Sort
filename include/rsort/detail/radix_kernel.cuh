@@ -182,6 +182,7 @@ void onesweep_byte(
     int exclusive_digit_prefix = 0;
     if (full_block) {
         Len_T warp_base = block_base + (Len_T)warp * ITEMS_PER_WARP;
+        
         #pragma unroll
         for (int i = 0; i < ITEMS_PER_THREAD; ++i) {
             keys[i] = RTraits::twiddle_in<Descending>(in_keys[warp_base + lane + i * WARP_SIZE]);
@@ -202,6 +203,7 @@ void onesweep_byte(
 
     } else {
         const uint64_t warp_base64 = (uint64_t)block_base + (uint64_t)warp * ITEMS_PER_WARP;
+        
         #pragma unroll
         for (int i = 0; i < ITEMS_PER_THREAD; ++i) {
             //uint32_t idx = warp_base + lane + i * WARP_SIZE;
