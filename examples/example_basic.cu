@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     
-    // timed sorting (only 1 iteration!)
+    // timed sorting (only 1 iteration)
     cudaEventRecord(start);
     rsort::sort(d_keys, &temp_bytes, d_workspace, n);
     cudaEventRecord(stop);
