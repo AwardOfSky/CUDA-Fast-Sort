@@ -1,0 +1,213 @@
+// Histogram header
+#pragma once
+
+#include <cuda_runtime.h>
+#include <cstdint>
+
+#include "utils.cuh"
+
+
+namespace rsort::detail {
+
+// simple block-wide exclusive scan for nElement <= blockDim.x
+template<typename T>
+__device__ RSORT_FORCEINLINE T scan_exclusive_block(T prefix, T* s_mem, int n_element) {
+    bool active = (int)threadIdx.x < n_element;
+    T value = active ? s_mem[threadIdx.x] : 0;
+    T x = value;
+    
+    for (uint32_t offset = 1; offset < (uint32_t)n_element; offset <<= 1) {
+        if (active && (int)offset <= (int)threadIdx.x) {
+            x += s_mem[threadIdx.x - offset];
+        }
+        __syncthreads();
+        
+        if (active) {
+            s_mem[threadIdx.x] = x;
+        }
+        __syncthreads();
+    }
+
+    T sum = s_mem[n_element - 1];
+    __syncthreads();
+    
+    if (active) {
+        s_mem[threadIdx.x] = x + prefix - value;
+    }
+    __syncthreads();
+    
+    return sum;
+}
+
+
+// Block exclusive scan specialized for 256 threads (8 warps).
+template<uint32_t SCAN256_WARPS>
+__device__ RSORT_FORCEINLINE uint32_t block_exclusive_scan_256(
+    uint32_t x,
+    uint32_t* warp_sums
+) {
+
+    int tid = (int)threadIdx.x;
+    int warp = tid / WARP_SIZE;
+    int lane = lane_id_i32();
+    
+    bool active = tid < (int)radix_consts::RADIX_BIN_SIZE;
+
+    uint32_t base = active ? x : 0u;
+    uint32_t v = base;
+    #pragma unroll
+    for (int offset = 1; offset < WARP_SIZE; offset <<= 1) {
+        uint32_t y = __shfl_up_sync(0xFFFFFFFFu, v, offset);
+        if (lane >= offset) v += y;
+    }
+
+    if (lane == (WARP_SIZE - 1) && warp < SCAN256_WARPS) {
+        warp_sums[warp] = v;
+    }
+    __syncthreads();
+
+    if (warp == 0) {
+        uint32_t t = (lane < SCAN256_WARPS) ? warp_sums[lane] : 0u;
+        #pragma unroll
+        for (int offset = 1; offset < SCAN256_WARPS; offset <<= 1) {
+            uint32_t y = __shfl_up_sync(0xFFFFFFFFu, t, offset);
+            if (lane >= offset) t += y;
+        }
+        if (lane < SCAN256_WARPS) {
+            warp_sums[lane] = t - warp_sums[lane];
+        }
+        
+    }
+    __syncthreads();
+
+    return active ? (warp_sums[warp] + (v - base)) : 0u;
+}
+
+
+// Main histogram kernel performaing a global count of all passes
+template<
+    bool Descending,
+    typename Lookback_T,
+    typename Key_T,
+    typename Len_T,
+    bool Is_Long_Double = false,
+    bool DYNAMIC_WORK_STEAL = true
+>
+__global__ void GHistogram_8bits(
+    const Key_T* __restrict__ inputs,
+    Len_T n,
+    Lookback_T* __restrict__ gp_sum_buffer, // [RADIX_PASSES][RADIX_BIN_SIZE]
+    uint32_t start_bits,
+    uint32_t* __restrict__ counter
+) {
+
+
+    using RT = radix_tuning<Key_T>;
+    using RTraits = radix_traits<Key_T, Is_Long_Double>;
+    constexpr uint32_t RADIX_BIN_SIZE = RT::RADIX_BIN_SIZE;
+    constexpr uint32_t RADIX_BITS = RT::RADIX_BITS;
+    constexpr uint32_t RADIX_PASSES = sizeof(Key_T);
+
+    using H = histogram_tuning<Key_T>;
+    constexpr uint32_t GHIST_ITEMS_PER_THREAD = H::GHIST_ITEMS_PER_THREAD;
+    constexpr uint32_t GHIST_ITEM_PER_BLOCK = H::GHIST_ITEM_PER_BLOCK;
+    constexpr uint32_t SCAN256_WARPS = H::SCAN256_WARPS;
+    constexpr uint32_t EXCLUSIVE_SCAN_256 = H::EXCLUSIVE_SCAN_256;
+    using U = typename RTraits::unsigned_of;
+
+
+    __shared__ uint32_t local_counters[RADIX_PASSES][RADIX_BIN_SIZE];
+
+    // if constexpr (EXCLUSIVE_SCAN_256) {
+    __shared__ uint32_t scan_warp_sums[SCAN256_WARPS];
+    //}
+
+
+    // init
+    #pragma unroll
+    for (int p = 0; p < RADIX_PASSES; ++p) {
+        #pragma unroll
+        for (int j = (int)threadIdx.x; j < (int)RADIX_BIN_SIZE; j += (int)blockDim.x) {
+            local_counters[p][j] = 0;
+        }
+    }
+    __syncthreads();
+
+    // work load definition
+    auto histogram_chunk = [&](Len_T block_ind) {
+        #pragma unroll
+        for (int j = 0; j < GHIST_ITEMS_PER_THREAD; ++j) {
+            Len_T idx = block_ind * GHIST_ITEM_PER_BLOCK + threadIdx.x * GHIST_ITEMS_PER_THREAD + (Len_T)j;
+            if (idx < n) {
+                U item = RTraits::twiddle_in<Descending>(inputs[idx]);
+                #pragma unroll
+                for (int p = 0; p < RADIX_PASSES; ++p) {
+                    U bit = start_bits + (U)p * RADIX_BITS;
+                    U b = RTraits::extract_key(item, bit);
+                    atomicAdd(&local_counters[p][b], 1u);
+                }
+            }
+        }
+    };
+
+    // Dynamic work stealing - faster but only safe if each block's bin count fit 32-bits
+    // always true if using using 32-bit lookback
+    Len_T num_blocks = div_round_up<Len_T>(n, GHIST_ITEM_PER_BLOCK);
+    if constexpr (DYNAMIC_WORK_STEAL) {
+        for (;;) {
+
+            // global counter
+            __shared__ uint32_t i_block;
+            if (threadIdx.x == 0) {
+                i_block = atomicInc(counter, 0xFFFFFFFFu);
+            }
+            __syncthreads();
+
+            // stop condition
+            if ((Len_T)i_block >= num_blocks) {
+                break;
+            }
+
+            histogram_chunk(i_block);
+            __syncthreads();
+        }
+    } else {
+        // Fixed CTA striding. With 32 bit n, the maximum items seen by one CTA is
+        // ceil(num_blocks / gridDim.x) * GHIST_ITEM_PER_BLOCK <= n, so uint32 locals stay safe.
+        for (uint32_t i_block_fixed = (uint32_t)blockIdx.x; i_block_fixed < num_blocks; i_block_fixed += (uint32_t)gridDim.x) {
+            histogram_chunk(i_block_fixed);
+            __syncthreads();
+        }
+    }
+
+    // exclusive scan per pass (in shared)
+    int block_dim = (int)blockDim.x;
+    #pragma unroll
+    for (int p = 0; p < RADIX_PASSES; ++p) {
+        if constexpr (EXCLUSIVE_SCAN_256) {
+            uint32_t x = local_counters[p][threadIdx.x];
+            uint32_t excl = block_exclusive_scan_256<SCAN256_WARPS>(x, scan_warp_sums);
+            local_counters[p][threadIdx.x] = excl;
+            __syncthreads();
+        } else {
+            uint32_t prefix = 0u;
+            for (int i = 0; i < (int)RADIX_BIN_SIZE; i += block_dim) {
+                int n_el = (int)RADIX_BIN_SIZE - i;
+                if (n_el > block_dim) {
+                    n_el = block_dim;
+                }
+                prefix += scan_exclusive_block<uint32_t>(prefix, &local_counters[p][i], n_el);
+            }
+        }
+    }
+
+    // accumulate into global gp_sum_buffer
+    #pragma unroll
+    for (int p = 0; p < RADIX_PASSES; ++p) {
+        for (int j = (int)threadIdx.x; j < (int)RADIX_BIN_SIZE; j += block_dim) {
+            atomic_add_wrap(&gp_sum_buffer[p * RADIX_BIN_SIZE + j], (Lookback_T)local_counters[p][j]);
+        }
+    }
+}
+
+} // namespace rsort::detail

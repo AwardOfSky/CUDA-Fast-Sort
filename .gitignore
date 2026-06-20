@@ -2,15 +2,20 @@
 build/
 bin/
 *.o
+*.d
 *.obj
 *.exe
 *.out
 *.cubin
+
 # specifics
-src/cub_radix
-src/radix_gpu
-src/rsort
-monolithic/rsort
+benchmark/cub_radix
+benchmark/cub_radix_double
+benchmark/rsort
+examples/example_full
+examples/example_basic
+monolithic/validate_mono
+
 
 # CUDA / NVCC temp
 *.fatbin
