@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-Maintained-brightgreen)
 ![Release](https://img.shields.io/badge/release-v0.4.0-orange)
 
-**rsort** is an experimental CUDA radix sort library based on [NVIDIA CUB's](https://github.com/NVIDIA/cccl/tree/main/cub) onesweep design. It implements key-only and key-value sorting for multiple key widths, including 128-bit keys, long double support, etc, and provides validation and benchmarking against CUB.
+**rsort** is an experimental CUDA radix sort library based on [NVIDIA CUB's](https://github.com/NVIDIA/cccl/tree/main/cub) onesweep design. It implements key-only and key-value sorting for multiple key widths, including 128-bit keys, platform-dependent `long double` support, and provides validation and benchmarking against CUB.
 
 Initially motivated by the GPUOpen article on [boosting GPU radix sort performance](https://gpuopen.com/learn/boosting_gpu_radix_sort/), this project started as a small educational endeavour to get familiar with CUDA and delve deeper into C++.
 
@@ -21,7 +21,7 @@ Validation tests and benchmarks are included to corroborate correctness and perf
 
 ## Quick Start
 
-Copy `include` directory into your project (check `monolithic` for single header). Quick and dirty example:
+Copy `include` directory into your project (check `monolithic` for single header). Minimal example:
 
 ```cpp
 #include <rsort/rsort.cuh>
@@ -30,7 +30,7 @@ Copy `include` directory into your project (check `monolithic` for single header
 size_t temp_bytes = 0;
 uint8_t* d_workspace = nullptr;
 
-rsort::sort(d_keys, &temp_bytes, nullptr, n); // get size
+rsort::sort(d_keys, &temp_bytes, d_workspace, n); // get size
 cudaMalloc(&d_workspace, temp_bytes);
 
 rsort::sort(d_keys, &temp_bytes, d_workspace, n); // sort
@@ -55,6 +55,7 @@ Check `examples` and `benchmark` folders for more.
   - [Key-Value pairs](#key-value-pairs)
   - [Cold vs. Steady state](#cold-vs-steady-state)
   - [128-bit results](#128-bit-results)
+  - [TL;DR](#tldr)
 - [Validation](#validation)
 - [Failed Experiments](#failed-experiments)
 - [Releases](#releases)
@@ -66,13 +67,13 @@ Check `examples` and `benchmark` folders for more.
 
 ## Key Features
 
-The implementation is based on CUB's DeviceRadixSort. It is stable, using a 8-bit radix with an onesweep design (per pass: read once, write once) and *a priori* global histogram counts. The lookback uses the classic coupled lookback chain with early publication and the addition of epoch bits.
+The implementation is based on CUB's DeviceRadixSort. It is stable, using an 8-bit radix with an onesweep design (per pass: read once, write once) and *a priori* global histogram counts. The lookback uses the classic coupled lookback chain with early publication and the addition of epoch bits.
 
 ### The algorithm currently implements:
 
 - Keys of all the standard types <sup>1</sup>
 - "semi"-arbitrary array sizes <sup>2</sup>
-- Ascend/descend
+- Ascending/descending order
 - Key-value pair sorting
 - Support for 128-bit keys (Including **long doubles**)
 
@@ -176,13 +177,13 @@ Some noteworthy micro-optimizations:
 The API exposes 4 main entry points for combinations of standard/KV-pair sorting, and ascending/descending sorting. These are defined in the main [rsort.cuh](include/rsort/rsort.cuh) header.
 
 
-- **sort** - Sorts an array of keys only in ascending order.
+- **rsort::sort** - Sorts an array of keys only in ascending order.
 
-- **sort_descending** - Sorts an array of keys only in descending order.
+- **rsort::sort_descending** - Sorts an array of keys only in descending order.
 
-- **sort_pairs** - Sorts an array of keys, along with a second array of corresponding values, in ascending order.
+- **rsort::sort_pairs** - Sorts an array of keys, along with a second array of corresponding values, in ascending order.
 
-- **sort_pairs_descending** - Sorts an array of keys, along with a second array of corresponding values, in descending order.
+- **rsort::sort_pairs_descending** - Sorts an array of keys, along with a second array of corresponding values, in descending order.
 
 
 #### Arguments (in order):

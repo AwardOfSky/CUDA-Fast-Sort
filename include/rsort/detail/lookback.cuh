@@ -264,8 +264,8 @@ struct Lookback {
         T raw = *ptr;
 
 
-        // change spin/verifications according to how hot the path is
-        // 0 SPINS we lose the oppurtiny to exit
+        // Change spin/verifications according to how hot the path is
+        // 0 SPINS we lose the opportunity to exit
         // more than 1 we just spin our wheels, might be good for less items per thread
 #if LOOKBACK_DYMANIC_WAITING && defined(_WIN32)
         // for first few skip global check, else only do 1
@@ -280,6 +280,8 @@ struct Lookback {
             }
             raw = *ptr;
         }
+        // I'm not a fan of this optimization, might get removed in future versions
+        
 
         wait_valid_lookback_state(&raw, ptr, lb_epoch_bits);
 
