@@ -238,7 +238,7 @@ Performs a benchmark run, sorting an array of 10M random elements, showing the r
 
 ### Setup
 
-To run the this benchmark, ```make rsort``` in the ```benchmark``` ([radix_gpu.cu](benchmark/radix_gpu.cu)), and run it. Configuration used for all experiments:
+To run the this benchmark, ```make rsort``` in the ```benchmark``` folder ([radix_gpu.cu](benchmark/radix_gpu.cu)), and run it. Configuration used for all experiments:
 
 - **Hardware:**
 	- **GPU** - NVIDIA GeForce RTX 3080 Ti <sup>1</sup>
