@@ -74,6 +74,7 @@ struct radix_tuning : radix_consts {
     // - Key Staging can't be disabled
     // - Value staging can be disabled,
     //   but if so, we have to revert key staging to indices
+
     static constexpr staging_pair staging_policy() {
 
         // default policy
@@ -131,6 +132,8 @@ struct radix_tuning : radix_consts {
     // 32-bit - 21/12
     // 64-bit - 6/14 5/17 4/22 7/22(this one?) 6/26 6/27
     // 128-bit - 2/19, 3/25
+    //
+    // Disclaimer: All kernel geometry needs tuning besides sm_86 
 
     static constexpr Tuning_T get_default_cta_geometry() {
         //return  (sizeof(Key_T) <= 4) ? 21 : // 21

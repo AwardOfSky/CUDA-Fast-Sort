@@ -238,7 +238,8 @@ Performs a benchmark run, sorting an array of 10M random elements, showing the r
 
 ### Setup
 
-Configuration used for all  experiments:
+To run the this benchmark, ```make rsort``` in the ```benchmark``` folder, and run [radix_gpu.cu](benchmark/radix_gpu.cu).
+Configuration used for all experiments:
 
 - **Hardware:**
 	- **GPU** - NVIDIA GeForce RTX 3080 Ti <sup>1</sup>
@@ -258,7 +259,6 @@ Configuration used for all  experiments:
 <sup>1</sup> No GPU background processes running; headless (no displays attached).
 
 <sup>2</sup> As most of the code executed at runtime ends up being device-specific, compiled with NVCC, -O3 does not do much. In testing, as a curiosity, setting -O0 and -O3 were shown to yield similar timings.
-
 
 ### Data collection
 
@@ -410,10 +410,10 @@ Checklist of standardization efforts for all major vN.N releases from version v0
 ## Notes and Disclaimers
 
 - While extensively tested and benchmarked, rsort has not yet received the level of platform coverage, validation, long-term maintenance and overall battle-tested'ness expected of a production library.
+- Tuning is exclusive and specialized to `sm_86` in [tuning.cuh](include/rsort/detail/tuning.cuh), as I don't have access to other cards to test. Cross-device results may vary.
 - For convenience, a monolithic single-header version is provided in [monolithic/rsort.cuh](monolithic/rsort.cuh). This header is updated and validated for tagged releases, while development primarily happens in the split-header implementation. Therefore, some features might not be up to date with active development.
-- The implementation was tested on a single GPU (mine). Cross-device results may vary.
 - The optimizations explored here are, to the best of my knowledge, not widely documented in existing GPU radix sort literature, hence this project.
-- Part of the point of this implementation was to prove the optimizations can be carried out without loss of generality and without getting in the way of other features.
+- Part of the point of this implementation was to prove the optimizations can be carried out without loss of generality and without getting in the way of other features and optimizations.
 - Performance was measured with release 1 of this repository. Since then, some optimizations were done, mainly to shared memory reuse and kernel geometry, that might change performance (increase in most cases).
 
 ## TODOs

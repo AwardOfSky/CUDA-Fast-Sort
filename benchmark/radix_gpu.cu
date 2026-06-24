@@ -15,6 +15,7 @@
     TODOs:
     - Change C-style pointers to C++ style
     - AoS API (when nvcc gets reflection)
+    - Tuning for architectures other than sm_86
 */
 
 #include <cuda_runtime.h>
